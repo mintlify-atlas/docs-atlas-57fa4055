@@ -1,0 +1,244 @@
+---
+title: ContextSwitcher
+description: GPS-based mode selector that determines in-situ vs delivery context using geofencing
+---
+
+The `ContextSwitcher` component displays an interactive map that allows users to select a restaurant location. It uses GPS-based geofencing with the Haversine formula to automatically determine whether the user is within the restaurant (enabling in-situ table service) or outside (enabling delivery mode).
+
+## Component overview
+
+Located at `/src/components/location/ContextSwitcher.tsx`, this component:
+- Requests and manages location permissions
+- Displays an interactive Mapbox map with the user's current location
+- Allows users to tap on the map to set the restaurant location
+- Calculates distance between user and restaurant using the Haversine formula
+- Automatically switches app mode based on proximity (geofencing)
+- Handles permission denied states with recovery actions
+
+## Props
+
+The `ContextSwitcher` component does not accept any props. It's a standalone component that manages its own state and integrates with the app's location and cart stores.
+
+## Usage
+
+```tsx
+import ContextSwitcher from '@/src/components/location/ContextSwitcher';
+
+export default function LocationScreen() {
+  return <ContextSwitcher />;
+}
+```
+
+## Permission states
+
+The component manages three permission states:
+
+### Loading
+
+Displays while requesting permissions and acquiring GPS location:
+
+```tsx
+if (permStatus === 'loading' || locating || !userLocation) {
+  return (
+    <View style={styles.centered}>
+      <ActivityIndicator size="large" color={Brand.primary} />
+      <Text style={styles.loadingText}>Obteniendo tu ubicación...</Text>
+    </View>
+  );
+}
+```
+
+### Denied
+
+Shows an error state with a link to system settings:
+
+```tsx
+if (permStatus === 'denied') {
+  return (
+    <ErrorState
+      icon={<Navigation size={60} color={Brand.primary} strokeWidth={1.4} />}
+      title="Ubicación bloqueada"
+      message="TableOrder necesita acceso a tu ubicación para detectar si estás en el restaurante o necesitas delivery."
+      primaryAction={{
+        label: 'Abrir configuración',
+        onPress: () => Linking.openSettings(),
+        icon: <MapPin size={16} color="#fff" strokeWidth={2} />,
+      }}
+    />
+  );
+}
+```
+
+### Granted
+
+Renders the interactive map view.
+
+## Geofencing logic
+
+The component uses the Haversine formula to calculate precise distances:
+
+### Haversine formula implementation
+
+```tsx
+function calculateDistance(c1: Coordinates, c2: Coordinates): number {
+  const R = 6_371_000; // Earth's radius in meters
+  const φ1 = (c1.latitude * Math.PI) / 180;
+  const φ2 = (c2.latitude * Math.PI) / 180;
+  const Δφ = ((c2.latitude - c1.latitude) * Math.PI) / 180;
+  const Δλ = ((c2.longitude - c1.longitude) * Math.PI) / 180;
+  const a =
+    Math.sin(Δφ / 2) ** 2 +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+```
+
+The formula calculates great-circle distance using the WGS-84 coordinate system:
+- `R`: Earth's radius (6,371,000 meters)
+- `φ`: Latitude in radians
+- `Δφ`: Latitude difference
+- `Δλ`: Longitude difference
+- Returns distance in meters
+
+### Mode determination
+
+When the user taps on the map, the component calculates the distance and switches modes:
+
+```tsx
+const onMapPress = useCallback(
+  (feature: MapPressFeature) => {
+    if (!userLocation) return;
+
+    const [longitude, latitude] = feature.geometry.coordinates;
+    const tapped: Coordinates = { latitude, longitude };
+    setRestaurant(tapped);
+
+    const distanceMeters = calculateDistance(userLocation, tapped);
+
+    if (distanceMeters <= Config.restaurant.geofenceRadiusMeters) {
+      // IN-SITU: within restaurant
+      setLocations(userLocation, tapped);
+      setAppMode('SCANNER');
+      setServiceType('TABLE');
+    } else {
+      // DELIVERY: outside restaurant
+      setLocations(userLocation, tapped);
+      setAppMode('DELIVERY');
+      setServiceType('DELIVERY');
+      router.push('/(delivery)/delivery-catalog');
+    }
+  },
+  [userLocation, setLocations, setAppMode, setServiceType, router]
+);
+```
+
+## Map configuration
+
+The component uses Mapbox Maps with specific settings:
+
+<ParamField path="facing" type="string">
+  Camera facing direction (not applicable for maps)
+</ParamField>
+
+<ParamField path="logoEnabled" type="boolean" default={false}>
+  Hides the Mapbox logo overlay
+</ParamField>
+
+<ParamField path="attributionEnabled" type="boolean" default={false}>
+  Hides attribution controls
+</ParamField>
+
+<ParamField path="scaleBarEnabled" type="boolean" default={false}>
+  Hides the scale bar
+</ParamField>
+
+## Map elements
+
+### Camera
+
+Centered on the user's GPS location with appropriate zoom:
+
+```tsx
+<Camera
+  defaultSettings={{
+    centerCoordinate: [userLocation.longitude, userLocation.latitude],
+    zoomLevel: 15,
+  }}
+/>
+```
+
+### User location
+
+Displays a blue dot for the current user position:
+
+```tsx
+<UserLocation visible androidRenderMode="compass" />
+```
+
+### Restaurant pin
+
+Custom marker that appears when the user taps the map:
+
+```tsx
+{restaurant && (
+  <PointAnnotation
+    id="restaurant-pin"
+    coordinate={[restaurant.longitude, restaurant.latitude]}
+  >
+    <View style={styles.restaurantPin}>
+      <View style={styles.restaurantPinDot} />
+    </View>
+  </PointAnnotation>
+)}
+```
+
+## Instruction card
+
+An overlay card explains the interaction:
+
+```tsx
+<View style={styles.instructionCard}>
+  <MapPinned size={20} color={Brand.primary} strokeWidth={1.8} />
+  <View style={styles.instructionText}>
+    <Text style={styles.instructionTitle}>Selecciona el restaurante</Text>
+    <Text style={styles.instructionBody}>
+      Toca en el mapa donde está el restaurante. Si estás a menos de{' '}
+      {Config.restaurant.geofenceRadiusMeters} m se activa el escáner QR;
+      si estás más lejos, se activa el modo delivery.
+    </Text>
+  </View>
+</View>
+```
+
+## Coordinate system
+
+Mapbox uses GeoJSON coordinate order: `[longitude, latitude]`
+
+```tsx
+const [longitude, latitude] = feature.geometry.coordinates;
+const tapped: Coordinates = { latitude, longitude };
+```
+
+Note the order conversion from GeoJSON (lon, lat) to the app's `Coordinates` type (lat, lon).
+
+## Dependencies
+
+- `@rnmapbox/maps`: Mapbox map rendering
+- `expo-location`: GPS location access
+- `expo-router`: Navigation to delivery catalog
+- `lucide-react-native`: Icons for UI elements
+- `@/src/stores/useLocationStore`: Location and app mode state
+- `@/src/stores/useCartStore`: Service type state
+- `@/src/lib/core/config`: Geofence radius configuration
+- `@/src/lib/core/types`: Coordinates type definition
+- `@/src/components/ui/ErrorState`: Permission denied UI
+
+## Configuration
+
+Geofence radius is defined in the app config:
+
+```tsx
+Config.restaurant.geofenceRadiusMeters
+```
+
+This value determines the maximum distance for in-situ mode activation.

@@ -1,0 +1,335 @@
+---
+title: Stripe configuration
+description: Configure payment processing with Stripe React Native SDK
+---
+
+TableOrder integrates with Stripe for secure payment processing in both Table and Delivery modes. This guide covers obtaining API keys, configuring the SDK, and understanding the mock payment implementation.
+
+## Overview
+
+The app uses the `@stripe/stripe-react-native` SDK to handle payment flows. While the current implementation uses a **mock payment service** for demonstration purposes, the infrastructure is fully prepared for real Stripe integration.
+
+<Warning>
+  The current version simulates payment processing with a 2-second delay and 15% random failure rate. Real Stripe integration requires additional backend implementation.
+</Warning>
+
+## Payment features
+
+TableOrder's payment system includes:
+
+- **Virtual card preview:** Real-time card number and expiry masking
+- **Payment validation:** Client-side checks for card number, expiry, and CVV format
+- **Mock processing:** Simulated payment intent with realistic latency
+- **Error handling:** Graceful failure states with retry options
+- **Receipt generation:** Automatic PDF ticket creation via `expo-print`
+- **Receipt dispatch:** PDF sent to Telegram for back-office tracking
+- **Push notifications:** Local notification on successful payment
+
+## Getting started
+
+<Steps>
+  <Step title="Create a Stripe account">
+    Visit [stripe.com/register](https://dashboard.stripe.com/register) and sign up for a free account. Stripe provides test mode access immediately—no identity verification required for development.
+  </Step>
+  
+  <Step title="Obtain your publishable key">
+    Navigate to [Developers → API Keys](https://dashboard.stripe.com/test/apikeys) in the Stripe Dashboard.
+    
+    Copy your **Publishable key**—it starts with `pk_test_` for test mode or `pk_live_` for production.
+    
+    <Note>
+      Publishable keys are safe to include in client applications. They can only create payment intents and cannot access sensitive account data.
+    </Note>
+  </Step>
+  
+  <Step title="Add the key to .env">
+    Open your `.env` file and add the key:
+    
+    ```bash
+    EXPO_PUBLIC_STRIPE_KEY=pk_test_51Hn3KLJ9X...
+    ```
+  </Step>
+  
+  <Step title="Configure the plugin">
+    The Stripe plugin is already configured in `app.json`:
+    
+    ```json app.json
+    {
+      "plugins": [
+        [
+          "@stripe/stripe-react-native",
+          {
+            "merchantIdentifier": "merchant.com.tableorder.app",
+            "enableGooglePay": true
+          }
+        ]
+      ]
+    }
+    ```
+    
+    <Info>
+      The `merchantIdentifier` is required for Apple Pay integration (iOS only). Google Pay is enabled by default for Android.
+    </Info>
+  </Step>
+  
+  <Step title="Rebuild the native app">
+    Stripe SDK requires native code changes:
+    
+    ```bash
+    npx expo prebuild
+    npx expo run:ios
+    # or
+    npx expo run:android
+    ```
+  </Step>
+</Steps>
+
+## Mock payment implementation
+
+The current payment service simulates a real Stripe integration for demonstration purposes. The implementation is located in `src/lib/core/payments/paymentService.ts`:
+
+```typescript src/lib/core/payments/paymentService.ts
+export type PaymentResult =
+  | { success: true }
+  | { success: false; error: string };
+
+/**
+ * Simulates a payment intent round-trip with realistic latency.
+ * Fails 15% of the time to allow testing the error flow.
+ */
+export async function processMockPayment(_amount: number): Promise<PaymentResult> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+
+  const willSucceed = Math.random() > 0.15;
+
+  if (willSucceed) {
+    return { success: true };
+  }
+
+  return {
+    success: false,
+    error: 'Lo sentimos, el banco rechazo la transaccion. Intenta con otro metodo.',
+  };
+}
+```
+
+### Why mock payments?
+
+Real Stripe payment processing requires a backend server to:
+
+1. Create a Payment Intent securely (using your secret key)
+2. Return the `client_secret` to the mobile app
+3. Confirm the payment after card collection
+4. Handle webhooks for payment status updates
+
+TableOrder is designed as a **frontend portfolio project** and does not include backend infrastructure. The mock service demonstrates the complete UX flow without requiring server deployment.
+
+<Tip>
+  To implement real payments, you'll need to create a backend API endpoint that calls `stripe.paymentIntents.create()` and returns the client secret to the app.
+</Tip>
+
+## Payment flow architecture
+
+Here's how the mock payment integrates with the rest of the app:
+
+```
+User taps "Confirmar Pago"
+        │
+        ▼
+    Validate card data
+    (client-side format checks)
+        │
+        ▼
+    processMockPayment(totalAmount)
+    (2s delay + 85% success rate)
+        │
+        ├─── Success
+        │      │
+        │      ├─ Generate PDF receipt (expo-print)
+        │      ├─ Send to Telegram (optional)
+        │      ├─ Show local notification
+        │      ├─ Play success sound
+        │      ├─ Trigger haptic feedback
+        │      └─ Navigate to success screen
+        │
+        └─── Failure
+               │
+               ├─ Show error toast
+               ├─ Keep user on checkout screen
+               └─ Allow retry
+```
+
+## Implementing real Stripe payments
+
+To replace the mock service with real Stripe integration:
+
+<Steps>
+  <Step title="Create a backend endpoint">
+    Set up a server (Node.js, Python, Ruby, etc.) with the Stripe SDK:
+    
+    ```javascript
+    const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+    
+    app.post('/create-payment-intent', async (req, res) => {
+      const { amount } = req.body;
+      
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount * 100, // Convert to cents
+        currency: 'usd',
+      });
+      
+      res.json({ clientSecret: paymentIntent.client_secret });
+    });
+    ```
+  </Step>
+  
+  <Step title="Initialize the Stripe provider">
+    Wrap your app with the Stripe provider in your root layout:
+    
+    ```typescript app/_layout.tsx
+    import { StripeProvider } from '@stripe/stripe-react-native';
+    import { Config } from '@/src/lib/core/config';
+    
+    export default function RootLayout() {
+      return (
+        <StripeProvider publishableKey={Config.stripe.publishableKey}>
+          {/* Your app content */}
+        </StripeProvider>
+      );
+    }
+    ```
+  </Step>
+  
+  <Step title="Replace mock service with real payment">
+    Update `paymentService.ts` to call your backend and use Stripe hooks:
+    
+    ```typescript
+    import { useStripe } from '@stripe/stripe-react-native';
+    
+    export async function processRealPayment(amount: number) {
+      const { confirmPayment } = useStripe();
+      
+      // 1. Call your backend to create a Payment Intent
+      const response = await fetch('https://your-backend.com/create-payment-intent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount }),
+      });
+      
+      const { clientSecret } = await response.json();
+      
+      // 2. Confirm the payment with collected card details
+      const { error, paymentIntent } = await confirmPayment(clientSecret, {
+        paymentMethodType: 'Card',
+      });
+      
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      
+      return { success: true };
+    }
+    ```
+  </Step>
+  
+  <Step title="Handle webhooks">
+    Set up a webhook endpoint to listen for payment status changes:
+    
+    ```javascript
+    app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+      const sig = req.headers['stripe-signature'];
+      const event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+      
+      if (event.type === 'payment_intent.succeeded') {
+        // Update order status in your database
+      }
+      
+      res.json({ received: true });
+    });
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Never use your **secret key** (`sk_test_...` or `sk_live_...`) in client-side code. It must remain server-side only.
+</Warning>
+
+## Testing card numbers
+
+When you implement real Stripe payments, use these test cards in test mode:
+
+| Card Number | Brand | Behavior |
+|-------------|-------|----------|
+| `4242 4242 4242 4242` | Visa | Succeeds |
+| `4000 0000 0000 9995` | Visa | Declined (insufficient funds) |
+| `4000 0000 0000 0002` | Visa | Declined (generic) |
+| `4000 0025 0000 3155` | Visa | Requires authentication (3D Secure) |
+
+<Info>
+  Use any future expiry date (e.g., `12/34`) and any 3-digit CVV (e.g., `123`) for test cards.
+</Info>
+
+## Security best practices
+
+<Note>
+  Follow these guidelines when implementing real payments:
+  
+  - Never log or store raw card numbers
+  - Use HTTPS for all API communication
+  - Validate amounts server-side (never trust client input)
+  - Implement idempotency keys to prevent duplicate charges
+  - Use Stripe's SCA-ready payment flow for European customers
+  - Set up proper error handling for network failures
+  - Monitor failed payments in the Stripe Dashboard
+</Note>
+
+## Troubleshooting
+
+### "Stripe key not configured" error
+
+**Cause:** Missing `EXPO_PUBLIC_STRIPE_KEY` in `.env`
+
+**Solution:** Add the key and restart the dev server. Rebuild the native app if using a production build.
+
+### Payments always fail immediately
+
+**Cause:** The mock service has a 15% failure rate by design
+
+**Solution:** This is expected behavior. Try multiple times to test both success and failure flows.
+
+### Google Pay button not showing on Android
+
+**Cause:** Google Pay requires additional setup for production
+
+**Solution:** For development, Google Pay works in test mode automatically. For production, register your app in the Google Pay Business Console.
+
+### Apple Pay not available on iOS
+
+**Cause:** Missing merchant identifier or incorrect entitlements
+
+**Solution:** Verify `merchantIdentifier` in `app.json` matches your Apple Developer account. Ensure Apple Pay capability is enabled in Xcode.
+
+## Payment limits and pricing
+
+Stripe pricing for standard card payments:
+
+| Region | Rate |
+|--------|------|
+| US | 2.9% + $0.30 per successful charge |
+| Europe | 1.4% + €0.25 per successful charge |
+| International | 3.9% + $0.30 per successful charge |
+
+<Info>
+  No monthly fees or setup costs. You only pay for successful transactions.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Mapbox setup" icon="map" href="/configuration/mapbox">
+    Configure delivery routing
+  </Card>
+  <Card title="Telegram bot" icon="paper-plane" href="/configuration/telegram">
+    Enable receipt dispatch
+  </Card>
+</CardGroup>

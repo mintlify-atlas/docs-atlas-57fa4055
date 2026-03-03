@@ -1,0 +1,322 @@
+---
+title: Sound service
+description: Play audio feedback using expo-av with preloading support
+---
+
+The Sound service provides audio feedback for user interactions, primarily QR code scanning. It uses expo-av to load and play a beep sound, with graceful degradation if audio resources are unavailable.
+
+## Configuration
+
+The service uses a remote audio file during development:
+
+```typescript
+const BEEP_SOURCE = {
+  uri: 'https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3',
+};
+```
+
+<Note>
+  For production, replace the remote URI with a local asset:
+  ```typescript
+  const BEEP_SOURCE = require('@/assets/sounds/beep.mp3');
+  ```
+  This eliminates network dependency and reduces bundle size once you have the asset.
+</Note>
+
+## Functions
+
+### preloadBeep
+
+Preloads the beep sound for instant playback. Should be called once during app startup.
+
+```typescript
+preloadBeep(): Promise<void>
+```
+
+<ResponseField name="void" type="void">
+  Returns void. Failures are silently caught to prevent app crashes.
+</ResponseField>
+
+#### Example
+
+```typescript
+import { preloadBeep } from '@/src/lib/core/sound/SoundService';
+import { useEffect } from 'react';
+
+// In RootLayout or App.tsx
+export default function RootLayout() {
+  useEffect(() => {
+    preloadBeep();
+  }, []);
+  
+  return <Slot />;
+}
+```
+
+#### Behavior
+
+1. Sets audio mode to play in silent mode on iOS:
+   ```typescript
+   await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+   ```
+
+2. Creates and caches the sound instance:
+   ```typescript
+   const { sound } = await Audio.Sound.createAsync(BEEP_SOURCE, {
+     shouldPlay: false,
+     volume: 0.8,
+   });
+   soundInstance = sound;
+   ```
+
+3. Errors are caught silently (graceful degradation):
+   ```typescript
+   try {
+     // ... load logic
+   } catch {
+     // Haptics will still work
+   }
+   ```
+
+---
+
+### playBeep
+
+Plays the preloaded beep sound. If not preloaded, attempts lazy loading on first call.
+
+```typescript
+playBeep(): Promise<void>
+```
+
+<ResponseField name="void" type="void">
+  Returns void. Failures are silently caught to avoid disrupting the scan flow.
+</ResponseField>
+
+#### Example
+
+```typescript
+import { playBeep } from '@/src/lib/core/sound/SoundService';
+import * as Haptics from 'expo-haptics';
+
+const handleQRCodeScanned = async (data: string) => {
+  // Play sound and haptic feedback
+  await playBeep();
+  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  
+  // Process QR code
+  console.log('Scanned:', data);
+};
+```
+
+#### Behavior
+
+1. Checks if sound is preloaded, lazy-loads if not:
+   ```typescript
+   if (!soundInstance) {
+     await preloadBeep();
+   }
+   ```
+
+2. Resets playback position to start:
+   ```typescript
+   await soundInstance?.setPositionAsync(0);
+   ```
+
+3. Plays the sound:
+   ```typescript
+   await soundInstance?.playAsync();
+   ```
+
+4. All errors are silently caught:
+   ```typescript
+   try {
+     // ... play logic
+   } catch {
+     // Intentionally swallowed — haptic feedback is the primary signal
+   }
+   ```
+
+---
+
+### unloadBeep
+
+Releases the Audio.Sound resource. Should be called on app unmount.
+
+```typescript
+unloadBeep(): Promise<void>
+```
+
+<ResponseField name="void" type="void">
+  Returns void. Errors are silently caught.
+</ResponseField>
+
+#### Example
+
+```typescript
+import { unloadBeep } from '@/src/lib/core/sound/SoundService';
+import { useEffect } from 'react';
+
+export default function RootLayout() {
+  useEffect(() => {
+    return () => {
+      unloadBeep();
+    };
+  }, []);
+  
+  return <Slot />;
+}
+```
+
+#### Behavior
+
+1. Unloads the sound instance and clears memory:
+   ```typescript
+   await soundInstance?.unloadAsync();
+   soundInstance = null;
+   ```
+
+2. Errors are caught silently:
+   ```typescript
+   try {
+     // ... unload logic
+   } catch {
+     // no-op
+   }
+   ```
+
+## Sound instance management
+
+The service maintains a module-level singleton:
+
+```typescript
+let soundInstance: Audio.Sound | null = null;
+```
+
+This ensures:
+- Only one sound object is loaded in memory
+- Subsequent `playBeep()` calls reuse the same instance
+- Multiple rapid calls won't create audio resource leaks
+
+## Graceful degradation
+
+The service is designed to never crash the app:
+
+1. **Network failures**: Remote URI loading fails silently
+2. **Missing assets**: Local file not found fails silently  
+3. **Audio permissions**: iOS audio restrictions fail silently
+4. **Resource exhaustion**: Memory/CPU limits fail silently
+
+Haptic feedback serves as the primary user feedback mechanism, with audio as an enhancement.
+
+## iOS silent mode
+
+The service explicitly enables playback in silent mode:
+
+```typescript
+await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+```
+
+This ensures the beep plays even if the user has their device muted, matching the behavior of system sounds like camera shutter.
+
+## Volume control
+
+The sound is preloaded at 80% volume:
+
+```typescript
+const { sound } = await Audio.Sound.createAsync(BEEP_SOURCE, {
+  shouldPlay: false,
+  volume: 0.8, // 0.0 to 1.0
+});
+```
+
+To adjust volume, modify the preload configuration or use:
+
+```typescript
+await soundInstance?.setVolumeAsync(0.5); // 50% volume
+```
+
+## Best practices
+
+1. **Preload early**: Call `preloadBeep()` in RootLayout for instant first-play
+
+2. **Don't await playback**: Fire and forget for responsive UI
+   ```typescript
+   playBeep(); // No await needed
+   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+   ```
+
+3. **Test on device**: Audio doesn't work reliably in simulators
+
+4. **Pair with haptics**: Audio alone may not be perceived (silent mode, hearing impairment)
+   ```typescript
+   const provideFeedback = async () => {
+     await Promise.all([
+       playBeep(),
+       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+     ]);
+   };
+   ```
+
+5. **Unload on unmount**: Prevent memory leaks in long-running apps
+
+## Common patterns
+
+### QR scanner feedback
+
+```typescript
+import { playBeep } from '@/src/lib/core/sound/SoundService';
+import * as Haptics from 'expo-haptics';
+
+const handleBarCodeScanned = ({ data }: { data: string }) => {
+  playBeep();
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  processQRCode(data);
+};
+```
+
+### Payment confirmation
+
+```typescript
+const handlePaymentSuccess = async () => {
+  await playBeep();
+  await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  await sendPaymentNotification(amount, tableName);
+  router.push('/success');
+};
+```
+
+### Button press enhancement
+
+```typescript
+const FancyButton = ({ onPress, children }) => {
+  const handlePress = () => {
+    playBeep();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onPress();
+  };
+  
+  return <Pressable onPress={handlePress}>{children}</Pressable>;
+};
+```
+
+## Troubleshooting
+
+### Sound doesn't play
+
+1. Check device volume (physical buttons)
+2. Verify audio mode on iOS (should play in silent mode)
+3. Test with headphones connected
+4. Check console for silent error logs
+5. Verify network connection (if using remote URI)
+
+### Sound plays with delay
+
+- Ensure `preloadBeep()` was called during app initialization
+- Check network latency (if using remote URI)
+- Switch to local asset for zero-latency playback
+
+### Memory warnings
+
+- Ensure `unloadBeep()` is called on app unmount
+- Check for multiple sound instances (should only be one)
+- Verify cleanup in useEffect return functions

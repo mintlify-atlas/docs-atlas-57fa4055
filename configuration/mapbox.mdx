@@ -1,0 +1,309 @@
+---
+title: Mapbox configuration
+description: Set up map rendering and delivery route calculation with Mapbox GL
+---
+
+TableOrder uses Mapbox for two critical features: rendering interactive maps in the ContextSwitcher and calculating driving routes for delivery orders. This guide covers obtaining API tokens, configuring the SDK, and understanding the service integration.
+
+## Overview
+
+Mapbox provides the mapping infrastructure for TableOrder's context-aware ordering system:
+
+- **Map rendering:** Displays the restaurant location and allows users to tap pins to trigger Table or Delivery mode
+- **Geofencing:** Calculates distance from user to restaurant using GPS coordinates
+- **Directions API:** Computes optimized driving routes with ETA and polyline geometry
+- **Route visualization:** Shows the delivery path on a map after checkout
+
+<Info>
+  TableOrder uses `@rnmapbox/maps` (React Native Mapbox GL) instead of React Native Maps for better performance and native-quality rendering.
+</Info>
+
+## Prerequisites
+
+Before configuring Mapbox, ensure you have:
+
+1. A Mapbox account (free tier available)
+2. Two access tokens: one public and one secret
+3. Expo CLI installed (`npm install -g expo-cli`)
+
+## Token setup
+
+<Steps>
+  <Step title="Create a Mapbox account">
+    Visit [mapbox.com](https://account.mapbox.com/auth/signup/) and sign up for a free account. The free tier includes:
+    
+    - 50,000 free map loads per month
+    - 100,000 Directions API requests per month
+    
+    This is sufficient for development and small-scale production use.
+  </Step>
+  
+  <Step title="Create a public token">
+    Navigate to [Account → Access Tokens](https://account.mapbox.com/access-tokens/).
+    
+    Your account comes with a **Default Public Token** that you can use immediately. Copy this token—it starts with `pk.`.
+    
+    <Note>
+      Public tokens are safe to include in client bundles. They're scoped to your account and can be rotated if compromised.
+    </Note>
+  </Step>
+  
+  <Step title="Create a secret token">
+    Click **Create a token** and configure:
+    
+    - **Name:** `TableOrder Download Token`
+    - **Scopes:** Check `DOWNLOADS:READ` only
+    - **Token type:** Secret
+    
+    Copy this token immediately—it starts with `sk.` and cannot be retrieved again.
+    
+    <Warning>
+      Secret tokens must never be committed to version control or included in client bundles. They're used only at build time.
+    </Warning>
+  </Step>
+  
+  <Step title="Add tokens to .env">
+    Open your `.env` file and add both tokens:
+    
+    ```bash
+    EXPO_PUBLIC_MAPBOX_TOKEN=pk.eyJ1IjoidGFibGVvcmRlciIsImEi...
+    RNMAPBOX_MAPS_DOWNLOAD_TOKEN=sk.eyJ1IjoidGFibGVvcmRlciIsImEi...
+    ```
+  </Step>
+  
+  <Step title="Rebuild the native app">
+    The secret token is consumed during native build configuration:
+    
+    ```bash
+    npx expo prebuild
+    npx expo run:ios
+    # or
+    npx expo run:android
+    ```
+  </Step>
+</Steps>
+
+## Service implementation
+
+TableOrder's Mapbox integration is encapsulated in `src/lib/services/mapboxService.ts`:
+
+```typescript src/lib/services/mapboxService.ts
+import polyline from '@mapbox/polyline';
+import { Config } from '@/src/lib/core/config';
+import { Coordinates, DeliveryInfo } from '@/src/lib/core/types';
+
+const MAPBOX_BASE = 'https://api.mapbox.com/directions/v5/mapbox/driving';
+
+/**
+ * Fetches a driving route from origin (restaurant) to destination (user).
+ * Returns a fully structured DeliveryInfo object ready to be stored.
+ */
+export async function getDeliveryRoute(
+  origin: Coordinates,
+  destination: Coordinates
+): Promise<DeliveryInfo> {
+  const { token } = Config.mapbox;
+
+  if (!token) {
+    throw new Error('EXPO_PUBLIC_MAPBOX_TOKEN is not configured.');
+  }
+
+  // Mapbox expects coordinates in lon,lat order
+  const coords = `${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}`;
+  const url = `${MAPBOX_BASE}/${coords}?geometries=polyline&overview=full&access_token=${token}`;
+
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Mapbox API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const route = data.routes[0];
+
+  // Convert meters → km
+  const distanceKm = parseFloat((route.distance / 1000).toFixed(2));
+  
+  // Convert seconds → minutes
+  const etaMinutes = Math.ceil(route.duration / 60);
+  
+  // Decode polyline into coordinates
+  const decodedRoute = polyline.decode(route.geometry).map(([lat, lng]) => ({
+    latitude: lat,
+    longitude: lng,
+  }));
+
+  return { distanceKm, etaMinutes, polyline: route.geometry, decodedRoute };
+}
+```
+
+### Key features
+
+<CardGroup cols={2}>
+  <Card title="Polyline decoding" icon="route">
+    Uses `@mapbox/polyline` to decode compressed geometry into coordinate arrays for MapView rendering
+  </Card>
+  <Card title="Unit conversion" icon="calculator">
+    Automatically converts meters to kilometers and seconds to minutes for display
+  </Card>
+  <Card title="Error handling" icon="triangle-exclamation">
+    Throws descriptive errors for missing tokens, network failures, or invalid routes
+  </Card>
+  <Card title="Type safety" icon="shield-check">
+    Fully typed with TypeScript interfaces matching the Mapbox API response
+  </Card>
+</CardGroup>
+
+## Directions API usage
+
+TableOrder calls the Mapbox Directions API whenever a user completes a delivery order. The API returns:
+
+| Response Field | Type | Description |
+|----------------|------|-------------|
+| `distance` | number | Total route distance in meters |
+| `duration` | number | Estimated driving time in seconds |
+| `geometry` | string | Compressed polyline (precision 5) |
+
+### Request format
+
+```
+GET https://api.mapbox.com/directions/v5/mapbox/driving/{lon1},{lat1};{lon2},{lat2}
+  ?geometries=polyline
+  &overview=full
+  &access_token={EXPO_PUBLIC_MAPBOX_TOKEN}
+```
+
+<Note>
+  Mapbox requires coordinates in **longitude, latitude** order (opposite of Google Maps). The service handles this conversion automatically.
+</Note>
+
+### Example response
+
+```json
+{
+  "routes": [
+    {
+      "distance": 4823.7,
+      "duration": 612.5,
+      "geometry": "u{r~Fdo~vOq@sB}@wB..."
+    }
+  ],
+  "code": "Ok"
+}
+```
+
+This is transformed into a `DeliveryInfo` object:
+
+```typescript
+{
+  distanceKm: 4.82,
+  etaMinutes: 11,
+  polyline: "u{r~Fdo~vOq@sB}@wB...",
+  decodedRoute: [
+    { latitude: 40.7128, longitude: -74.0060 },
+    { latitude: 40.7135, longitude: -74.0055 },
+    // ...
+  ]
+}
+```
+
+## Shipping cost calculation
+
+TableOrder uses a simple per-kilometer pricing model defined in `config.ts`:
+
+```typescript src/lib/core/config.ts
+export const Config = {
+  restaurant: {
+    costPerKm: 1.0, // $1 USD per kilometer
+  },
+};
+```
+
+The `calculateShippingCost` function applies this rate:
+
+```typescript src/lib/services/mapboxService.ts
+export function calculateShippingCost(distanceKm: number): number {
+  return parseFloat((distanceKm * Config.restaurant.costPerKm).toFixed(2));
+}
+```
+
+<Tip>
+  Adjust `costPerKm` in `config.ts` to match your restaurant's delivery pricing model. This value is not tied to environment variables.
+</Tip>
+
+## Geofencing logic
+
+TableOrder uses GPS coordinates and the Haversine formula to determine if a user is within the restaurant's delivery radius:
+
+```typescript
+const GEOFENCE_RADIUS = 50; // meters
+
+const distance = calculateDistance(userCoords, restaurantCoords);
+
+if (distance <= GEOFENCE_RADIUS) {
+  // User is inside → enable QR scanner (Table Mode)
+} else {
+  // User is outside → show delivery catalog (Delivery Mode)
+}
+```
+
+This radius is configurable in `config.ts`:
+
+```typescript
+export const Config = {
+  restaurant: {
+    geofenceRadiusMeters: 50,
+  },
+};
+```
+
+## Troubleshooting
+
+### Maps display a watermark but no tiles
+
+**Cause:** Missing or invalid `EXPO_PUBLIC_MAPBOX_TOKEN`
+
+**Solution:** Verify the token in `.env` matches your Mapbox dashboard. Ensure it starts with `pk.` and has no extra whitespace.
+
+### Build fails with "Failed to download Mapbox SDK"
+
+**Cause:** Missing or invalid `RNMAPBOX_MAPS_DOWNLOAD_TOKEN` or missing `DOWNLOADS:READ` scope
+
+**Solution:** Create a new secret token with the correct scope. Run `npx expo prebuild --clean` to clear cached configuration.
+
+### Directions API returns 401 Unauthorized
+
+**Cause:** Public token not properly loaded at runtime
+
+**Solution:** Restart the dev server and rebuild the app. Verify `process.env.EXPO_PUBLIC_MAPBOX_TOKEN` is accessible in `config.ts`.
+
+### Routes display incorrectly or in wrong location
+
+**Cause:** Coordinate order reversed (lat/lon instead of lon/lat)
+
+**Solution:** The service handles this automatically. If using custom code, ensure coordinates are passed in `longitude, latitude` order to the Mapbox API.
+
+## API limits and pricing
+
+### Free tier limits
+
+| Resource | Free Tier | Overage Cost |
+|----------|-----------|-------------|
+| Map loads | 50,000/month | $0.50 per 1,000 |
+| Directions API | 100,000/month | $0.50 per 1,000 |
+| Geocoding | 100,000/month | $0.50 per 1,000 |
+
+<Info>
+  For a restaurant with 100 daily delivery orders, you'll use ~3,000 Directions API requests per month—well within the free tier.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Stripe configuration" icon="credit-card" href="/configuration/stripe">
+    Set up payment processing
+  </Card>
+  <Card title="Telegram bot" icon="paper-plane" href="/configuration/telegram">
+    Configure receipt dispatch
+  </Card>
+</CardGroup>

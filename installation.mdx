@@ -1,0 +1,331 @@
+---
+title: Installation
+description: Set up TableOrder with Node.js, Expo, and required API keys for Mapbox, Stripe, and Telegram
+---
+
+## Prerequisites
+
+Before installing TableOrder, ensure you have the following installed on your system:
+
+<CardGroup cols={2}>
+  <Card title="Node.js 18+" icon="node-js">
+    Download from [nodejs.org](https://nodejs.org/)
+  </Card>
+  <Card title="Expo CLI" icon="terminal">
+    Install globally: `npm install -g expo-cli`
+  </Card>
+  <Card title="iOS Simulator" icon="apple">
+    Part of Xcode (macOS only)
+  </Card>
+  <Card title="Android Emulator" icon="android">
+    Part of Android Studio
+  </Card>
+</CardGroup>
+
+<Warning>
+  TableOrder requires native modules for camera, maps, and payments. You cannot run it in Expo Go - you must use a development build or run on a physical device.
+</Warning>
+
+## Installation steps
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the TableOrder repository to your local machine:
+    
+    ```bash
+    git clone https://github.com/Diego31-10/TableOrderApp.git
+    cd TableOrderApp
+    ```
+    
+    <Note>
+      Replace `YOUR_USERNAME` with your GitHub username or the repository owner's username.
+    </Note>
+  </Step>
+
+  <Step title="Install dependencies">
+    Install all required npm packages:
+    
+    ```bash
+    npm install
+    ```
+    
+    This will install all dependencies listed in `package.json`, including:
+    - React Native 0.83 and Expo SDK 55
+    - Mapbox Maps SDK (@rnmapbox/maps)
+    - Stripe React Native SDK
+    - Zustand for state management
+    - All Expo modules (camera, location, notifications, etc.)
+  </Step>
+
+  <Step title="Configure environment variables">
+    Copy the example environment file and add your API keys:
+    
+    ```bash
+    cp .env.example .env
+    ```
+    
+    Open `.env` in your text editor and configure the following variables:
+    
+    <Tabs>
+      <Tab title="Mapbox (Required)">
+        ```bash
+        # Public token for runtime map rendering
+        EXPO_PUBLIC_MAPBOX_TOKEN=pk.eyJ1IjoiWU9VUl9VU0VSTkFNRSIsImEiOiJZT1VSX1RPS0VOIn0.YOUR_SIGNATURE
+        
+        # Secret token for native SDK download at build time
+        RNMAPBOX_MAPS_DOWNLOAD_TOKEN=sk.eyJ1IjoiWU9VUl9VU0VSTkFNRSIsImEiOiJZT1VSX1RPS0VOIn0.YOUR_SIGNATURE
+        ```
+        
+        <Info>
+          Get your Mapbox tokens from [account.mapbox.com](https://account.mapbox.com/access-tokens/). The secret token needs `DOWNLOADS:READ` scope.
+        </Info>
+      </Tab>
+      
+      <Tab title="Stripe (Optional)">
+        ```bash
+        # Publishable key for test mode
+        EXPO_PUBLIC_STRIPE_KEY=pk_test_YOUR_KEY_HERE
+        ```
+        
+        <Info>
+          Get your test API key from [dashboard.stripe.com/test/apikeys](https://dashboard.stripe.com/test/apikeys). The app uses a mock payment service but can integrate with real Stripe payments.
+        </Info>
+      </Tab>
+      
+      <Tab title="Telegram (Optional)">
+        ```bash
+        # Bot token from @BotFather
+        EXPO_PUBLIC_TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
+        
+        # Your chat ID (get from @userinfobot)
+        EXPO_PUBLIC_TELEGRAM_CHAT_ID=123456789
+        ```
+        
+        <Info>
+          Create a bot with [@BotFather](https://t.me/BotFather) on Telegram. PDF receipts will be sent to the specified chat ID after successful payments.
+        </Info>
+      </Tab>
+    </Tabs>
+    
+    <Warning>
+      Never commit your `.env` file to version control. It's already included in `.gitignore` for security.
+    </Warning>
+  </Step>
+
+  <Step title="Prebuild native projects">
+    Generate native iOS and Android projects with all required native modules:
+    
+    ```bash
+    npx expo prebuild
+    ```
+    
+    This command:
+    - Generates `ios/` and `android/` directories
+    - Links all native modules (camera, Stripe, Mapbox, notifications)
+    - Applies configuration from `app.json`
+    - Sets up permissions for camera, location, and notifications
+    
+    <Note>
+      You only need to run this once, or when you add new native dependencies.
+    </Note>
+  </Step>
+
+  <Step title="Run on your device">
+    Start the app on iOS or Android:
+    
+    <CodeGroup>
+      ```bash Android
+      npx expo run:android
+      ```
+      
+      ```bash iOS
+      npx expo run:ios
+      ```
+      
+      ```bash Development Server
+      npm start
+      ```
+    </CodeGroup>
+    
+    The app will launch on your connected device or emulator. Make sure you have:
+    - Android: An emulator running or a physical device connected via USB with developer mode enabled
+    - iOS: Xcode installed (macOS only) and an iOS Simulator running
+    
+    <Tip>
+      Use `npm start` to open the Expo dev tools, where you can choose to run on Android, iOS, or web.
+    </Tip>
+  </Step>
+</Steps>
+
+## Configuration reference
+
+TableOrder uses centralized configuration in `src/lib/core/config.ts`:
+
+```typescript src/lib/core/config.ts
+export const Config = {
+  mapbox: {
+    token: process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '',
+  },
+  telegram: {
+    botToken: process.env.EXPO_PUBLIC_TELEGRAM_BOT_TOKEN ?? '',
+    chatId: process.env.EXPO_PUBLIC_TELEGRAM_CHAT_ID ?? '',
+  },
+  restaurant: {
+    name: 'TableOrder Restaurant',
+    costPerKm: 1.0,
+    geofenceRadiusMeters: 50,
+  },
+} as const;
+```
+
+<AccordionGroup>
+  <Accordion title="Mapbox configuration">
+    - `token`: Public access token for map rendering and Directions API
+    - Required for both map display and delivery route calculations
+    - Free tier includes 50,000 requests/month
+  </Accordion>
+  
+  <Accordion title="Telegram configuration">
+    - `botToken`: Authentication token for your bot
+    - `chatId`: Destination for PDF receipt delivery
+    - Optional: App works without Telegram integration
+  </Accordion>
+  
+  <Accordion title="Restaurant configuration">
+    - `name`: Display name for receipts and notifications
+    - `costPerKm`: Shipping cost multiplier (default: $1/km)
+    - `geofenceRadiusMeters`: Distance threshold for mode switching (default: 50m)
+  </Accordion>
+</AccordionGroup>
+
+## Environment variables
+
+Complete reference for all supported environment variables:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `EXPO_PUBLIC_MAPBOX_TOKEN` | **Yes** | Mapbox public token for map rendering (starts with `pk.`) |
+| `RNMAPBOX_MAPS_DOWNLOAD_TOKEN` | **Yes** | Mapbox secret token for native SDK download (starts with `sk.`) |
+| `EXPO_PUBLIC_STRIPE_KEY` | Optional | Stripe publishable key for payment processing |
+| `EXPO_PUBLIC_TELEGRAM_BOT_TOKEN` | Optional | Telegram bot token from @BotFather |
+| `EXPO_PUBLIC_TELEGRAM_CHAT_ID` | Optional | Telegram chat ID for receipt delivery |
+
+<Note>
+  All variables prefixed with `EXPO_PUBLIC_` are exposed to the client bundle. Never use this prefix for secret keys.
+</Note>
+
+## Permissions
+
+TableOrder requires the following device permissions, configured in `app.json`:
+
+<Tabs>
+  <Tab title="Android">
+    ```json app.json
+    "permissions": [
+      "android.permission.CAMERA",
+      "android.permission.RECORD_AUDIO",
+      "ACCESS_COARSE_LOCATION",
+      "ACCESS_FINE_LOCATION"
+    ]
+    ```
+    
+    - **Camera**: QR code scanning for table identification
+    - **Location**: GPS geofencing for mode detection
+    - Audio recording permission is requested but not used
+  </Tab>
+  
+  <Tab title="iOS">
+    ```json app.json
+    "infoPlist": {
+      "NSLocationWhenInUseUsageDescription": "Necesitamos tu ubicación para saber si estás en el restaurante o necesitas delivery.",
+      "NSCameraUsageDescription": "Permite escanear el QR de tu mesa para ver el menú."
+    }
+    ```
+    
+    - **Location When In Use**: GPS geofencing for mode detection
+    - **Camera**: QR code scanning for table identification
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Map not displaying">
+    **Symptoms**: Black screen where map should appear
+    
+    **Solutions**:
+    1. Verify `EXPO_PUBLIC_MAPBOX_TOKEN` is set correctly in `.env`
+    2. Check your Mapbox token is valid at [account.mapbox.com](https://account.mapbox.com/access-tokens/)
+    3. Ensure token has required scopes enabled
+    4. Run `npx expo prebuild --clean` to regenerate native projects
+  </Accordion>
+  
+  <Accordion title="Build fails with Mapbox error">
+    **Symptoms**: Build error mentioning Mapbox downloads or authentication
+    
+    **Solutions**:
+    1. Verify `RNMAPBOX_MAPS_DOWNLOAD_TOKEN` is set in `.env`
+    2. Ensure the secret token has `DOWNLOADS:READ` scope
+    3. Restart Metro bundler: `npm start -- --clear`
+    4. Clean build: `npx expo prebuild --clean`
+  </Accordion>
+  
+  <Accordion title="Camera permission denied">
+    **Symptoms**: QR scanner shows blank screen or permission error
+    
+    **Solutions**:
+    1. Uninstall the app completely
+    2. Reinstall with `npx expo run:android` or `npx expo run:ios`
+    3. Grant camera permission when prompted
+    4. On iOS: Check Settings > Privacy > Camera > TableOrderApp
+    5. On Android: Check Settings > Apps > TableOrderApp > Permissions
+  </Accordion>
+  
+  <Accordion title="Location not working">
+    **Symptoms**: App stuck on loading screen or shows permission denied
+    
+    **Solutions**:
+    1. Ensure location services are enabled on your device
+    2. Grant location permission when prompted
+    3. On iOS Simulator: Features > Location > Custom Location
+    4. On Android Emulator: Use Extended Controls (⋮) > Location
+  </Accordion>
+  
+  <Accordion title="Metro bundler errors">
+    **Symptoms**: Build errors, module resolution failures, or cache issues
+    
+    **Solutions**:
+    ```bash
+    # Clear all caches and restart
+    npx expo start --clear
+    
+    # If that doesn't work, nuclear option:
+    rm -rf node_modules
+    npm install
+    npx expo prebuild --clean
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+  If you encounter persistent build issues, delete the `ios/` and `android/` directories and run `npx expo prebuild` again.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick start guide"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Test the app with example QR codes and explore both modes
+  </Card>
+  <Card
+    title="Architecture overview"
+    icon="diagram-project"
+    href="/architecture/overview"
+  >
+    Learn about the codebase structure and design patterns
+  </Card>
+</CardGroup>

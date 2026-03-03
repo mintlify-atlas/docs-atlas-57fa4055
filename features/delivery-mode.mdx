@@ -1,0 +1,324 @@
+---
+title: Delivery mode
+description: GPS-based delivery ordering with real-time route calculation and ETA
+---
+
+Delivery mode activates automatically when a customer is outside the restaurant's geofence radius (more than 50 meters away). Customers tap the restaurant location on a map, browse the full catalog, and receive a calculated shipping cost based on driving distance.
+
+## Activation flow
+
+<Steps>
+  <Step title="GPS permission request">
+    The app requests foreground location permissions using `expo-location`:
+
+    ```typescript src/components/location/ContextSwitcher.tsx
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      setPermStatus('denied');
+      return;
+    }
+    ```
+  </Step>
+
+  <Step title="User location capture">
+    The app captures the user's current GPS coordinates with balanced accuracy:
+
+    ```typescript src/components/location/ContextSwitcher.tsx
+    const pos = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+    setLocations(
+      { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
+      { latitude: 0, longitude: 0 }
+    );
+    ```
+  </Step>
+
+  <Step title="Map interaction">
+    A Mapbox GL map displays centered on the user's location with a blue dot marker. The user taps anywhere on the map to set the restaurant location.
+  </Step>
+
+  <Step title="Geofence calculation">
+    The Haversine distance formula determines whether delivery mode should activate:
+
+    ```typescript src/components/location/ContextSwitcher.tsx
+    const distanceMeters = calculateDistance(userLocation, tapped);
+
+    if (distanceMeters > Config.restaurant.geofenceRadiusMeters) {
+      setAppMode('DELIVERY');
+      setServiceType('DELIVERY');
+      router.push('/(delivery)/delivery-catalog');
+    }
+    ```
+
+    Default radius: **50 meters**
+  </Step>
+</Steps>
+
+## Route calculation
+
+When the user reaches checkout, the app fetches a driving route from Mapbox Directions API.
+
+### Mapbox Directions API integration
+
+The `mapboxService` handles route fetching and polyline decoding (src/lib/services/mapboxService.ts:36):
+
+```typescript
+export async function getDeliveryRoute(
+  origin: Coordinates,
+  destination: Coordinates
+): Promise<DeliveryInfo> {
+  const coords = `${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}`;
+  const url = `${MAPBOX_BASE}/${coords}?geometries=polyline&overview=full&access_token=${token}`;
+
+  const response = await fetch(url);
+  const data: MapboxDirectionsResponse = await response.json();
+
+  const route = data.routes[0];
+
+  // Convert meters → km (rounded to 2 decimal places)
+  const distanceKm = parseFloat((route.distance / 1000).toFixed(2));
+
+  // Convert seconds → minutes (rounded up to nearest minute)
+  const etaMinutes = Math.ceil(route.duration / 60);
+
+  // Decode the compressed polyline into [lat, lon][] pairs
+  const decodedPairs: [number, number][] = polyline.decode(route.geometry);
+
+  const decodedRoute: Coordinates[] = decodedPairs.map(([lat, lng]) => ({
+    latitude: lat,
+    longitude: lng,
+  }));
+
+  return {
+    distanceKm,
+    etaMinutes,
+    polyline: route.geometry,
+    decodedRoute,
+  };
+}
+```
+
+<Info>
+**Mapbox coordinate order:** The API expects `[longitude, latitude]` (GeoJSON order), not `[latitude, longitude]` (standard geographic order).
+</Info>
+
+### Shipping cost calculation
+
+Shipping cost is calculated based on distance using a per-kilometer rate:
+
+```typescript src/lib/services/mapboxService.ts
+export function calculateShippingCost(distanceKm: number): number {
+  return parseFloat((distanceKm * Config.restaurant.costPerKm).toFixed(2));
+}
+```
+
+Default rate: **$2.50 per kilometer**
+
+## Delivery information structure
+
+The `DeliveryInfo` type stores all route metadata:
+
+```typescript src/lib/core/types.ts
+interface DeliveryInfo {
+  distanceKm: number;        // 3.47
+  etaMinutes: number;        // 12
+  polyline: string;          // Encoded Mapbox polyline
+  decodedRoute: Coordinates[]; // Array of {latitude, longitude} points
+}
+```
+
+This data is stored in `useLocationStore` (src/stores/useLocationStore.ts:12):
+```typescript
+setDeliveryRoute: (info) => set({ deliveryInfo: info })
+```
+
+## Order summary calculation
+
+The checkout screen displays a comprehensive order summary (src/app/(checkout)/payment.tsx:88):
+
+<Tabs>
+  <Tab title="Cart subtotal">
+    ```typescript
+    const subtotal = items.reduce(
+      (s, i) => s + i.product.price * i.quantity, 
+      0
+    );
+    ```
+  </Tab>
+
+  <Tab title="Shipping cost">
+    ```typescript
+    const shippingCost = useCartStore((s) => s.shippingCost);
+    ```
+
+    Set during catalog browsing when the route is calculated.
+  </Tab>
+
+  <Tab title="Grand total">
+    ```typescript
+    const grandTotal = total + shippingCost;
+    ```
+
+    Displayed in the payment button and order summary.
+  </Tab>
+</Tabs>
+
+## State management
+
+### App mode switching
+
+```typescript src/stores/useLocationStore.ts
+interface LocationState {
+  appMode: AppMode;  // 'CHECKING' | 'SCANNER' | 'DELIVERY'
+  userLocation: Coordinates | null;
+  restaurantLocation: Coordinates | null;
+  deliveryInfo: DeliveryInfo | null;
+}
+```
+
+The mode determines which UI the app displays:
+
+| Mode | Trigger | UI |
+|------|---------|----|
+| `CHECKING` | Initial load | GPS permission prompt / loading |
+| `SCANNER` | Distance ≤ 50m | QR code scanner |
+| `DELIVERY` | Distance > 50m | Restaurant map + catalog |
+
+### Cart configuration
+
+```typescript src/stores/useCartStore.ts
+interface CartState {
+  serviceType: 'TABLE' | 'DELIVERY';
+  shippingCost: number;
+  setServiceType: (type: 'TABLE' | 'DELIVERY') => void;
+  setShippingCost: (cost: number) => void;
+}
+```
+
+The `serviceType` is set when the app mode switches (src/components/location/ContextSwitcher.tsx:92):
+```typescript
+setServiceType('DELIVERY');
+```
+
+## Map rendering
+
+The app uses `@rnmapbox/maps` (Mapbox GL Native) for map rendering:
+
+```typescript src/components/location/ContextSwitcher.tsx
+<MapView
+  style={StyleSheet.absoluteFillObject}
+  onPress={onMapPress}
+  logoEnabled={false}
+  attributionEnabled={false}
+  scaleBarEnabled={false}
+>
+  <Camera
+    defaultSettings={{
+      centerCoordinate: [userLocation.longitude, userLocation.latitude],
+      zoomLevel: 15,
+    }}
+  />
+
+  <UserLocation visible androidRenderMode="compass" />
+
+  {restaurant && (
+    <PointAnnotation
+      id="restaurant-pin"
+      coordinate={[restaurant.longitude, restaurant.latitude]}
+    >
+      <View style={styles.restaurantPin}>
+        <View style={styles.restaurantPinDot} />
+      </View>
+    </PointAnnotation>
+  )}
+</MapView>
+```
+
+<Note>
+The user's location is displayed as a built-in blue dot with compass orientation on Android.
+</Note>
+
+## Post-payment tracking
+
+After a successful delivery payment, the user is redirected to the tracking screen (src/app/(checkout)/payment.tsx:258):
+
+```typescript
+if (serviceType === 'DELIVERY') {
+  router.replace('/(delivery)/track-order');
+}
+```
+
+See [Tracking](/features/tracking) for details on the route visualization.
+
+## Configuration
+
+Delivery mode behavior is configured in `src/lib/core/config.ts`:
+
+```typescript
+export const Config = {
+  restaurant: {
+    name: 'TableOrder Restaurant',
+    geofenceRadiusMeters: 50,
+    costPerKm: 2.5,
+  },
+  mapbox: {
+    token: process.env.EXPO_PUBLIC_MAPBOX_TOKEN,
+  },
+};
+```
+
+<Warning>
+**Required environment variables:**
+- `EXPO_PUBLIC_MAPBOX_TOKEN` — Mapbox public token for map rendering and Directions API
+- `RNMAPBOX_MAPS_DOWNLOAD_TOKEN` — Mapbox secret token for native SDK download at build time
+
+The app will throw an error at runtime if these are not configured (src/lib/services/mapboxService.ts:42).
+</Warning>
+
+## Error handling
+
+### Permission denied
+
+If location permission is denied, the app displays an error state with a link to system settings (src/components/location/ContextSwitcher.tsx:102):
+
+```typescript
+<ErrorState
+  icon={<Navigation size={60} color={Brand.primary} />}
+  title="Ubicación bloqueada"
+  message="TableOrder necesita acceso a tu ubicación..."
+  primaryAction={{
+    label: 'Abrir configuración',
+    onPress: () => Linking.openSettings(),
+  }}
+/>
+```
+
+### Route calculation failure
+
+If the Mapbox API returns an error, the service throws (src/lib/services/mapboxService.ts:58):
+
+```typescript
+if (data.code !== 'Ok' || data.routes.length === 0) {
+  throw new Error('No route found between the two points.');
+}
+```
+
+This error should be caught and displayed to the user in production.
+
+## Related features
+
+<CardGroup cols={2}>
+  <Card title="Tracking" icon="map" href="/features/tracking">
+    Post-payment route visualization with ETA
+  </Card>
+  <Card title="Table Mode" icon="qrcode" href="/features/table-mode">
+    Alternative mode for customers inside the restaurant
+  </Card>
+  <Card title="Payments" icon="credit-card" href="/features/payments">
+    Checkout flow with shipping cost calculation
+  </Card>
+  <Card title="Contextual Menus" icon="utensils" href="/features/contextual-menus">
+    Menu filtering (delivery shows full catalog)
+  </Card>
+</CardGroup>

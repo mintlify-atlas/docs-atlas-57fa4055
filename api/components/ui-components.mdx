@@ -1,0 +1,267 @@
+---
+title: UI components
+description: Reusable UI components for banners, error states, and toast notifications
+---
+
+TableOrder includes a set of reusable UI components for common interface patterns. These components provide consistent styling and behavior across the application.
+
+## BirthdayBanner
+
+Animated banner that displays a birthday celebration message with a discount badge.
+
+### Location
+
+`/src/components/ui/BirthdayBanner.tsx`
+
+### Props
+
+<ParamField path="discount" type="number" required>
+  The discount amount as a decimal (e.g., `0.15` for 15% off). Automatically converted to a percentage for display.
+</ParamField>
+
+### Usage
+
+```tsx
+import BirthdayBanner from '@/src/components/ui/BirthdayBanner';
+
+export default function MenuScreen() {
+  return (
+    <View>
+      <BirthdayBanner discount={0.15} />
+      {/* Rest of menu */}
+    </View>
+  );
+}
+```
+
+### Animation
+
+The banner uses `react-native-reanimated` for smooth entrance animations:
+
+- **Slide in**: Translates from -80px with a spring animation
+- **Fade in**: Opacity animates from 0 to 1 over 400ms
+
+```tsx
+useEffect(() => {
+  translateY.value = withSpring(0, { damping: 14, stiffness: 110 });
+  opacity.value = withTiming(1, { duration: 400 });
+}, []);
+```
+
+### Visual structure
+
+The banner includes:
+- Cake icon (from `lucide-react-native`)
+- Title: "Mesa de celebracion"
+- Subtitle: "Tienes un descuento especial aplicado"
+- Discount badge with tag icon showing percentage
+
+### Styling
+
+- Background: Dark gold (`#2A2200`)
+- Border: Gold accent color (`Brand.birthday`)
+- Border radius: 14px
+- Padding: 16px horizontal, 12px vertical
+- Gap between elements: 12px
+
+---
+
+## ErrorState
+
+Full-screen error state component for unrecoverable flows like permission denials or network errors.
+
+### Location
+
+`/src/components/ui/ErrorState.tsx`
+
+### Props
+
+<ParamField path="icon" type="React.ReactNode" required>
+  Icon element to display at the top of the error state (typically from `lucide-react-native`)
+</ParamField>
+
+<ParamField path="title" type="string" required>
+  Bold heading text that describes the error
+</ParamField>
+
+<ParamField path="message" type="string" required>
+  Secondary message text explaining the error in detail
+</ParamField>
+
+<ParamField path="primaryAction" type="Action" optional>
+  Primary action button configuration
+  
+  ```tsx
+  interface Action {
+    label: string;
+    onPress: () => void;
+    icon?: React.ReactNode;
+  }
+  ```
+</ParamField>
+
+<ParamField path="secondaryAction" type="Action" optional>
+  Secondary action button configuration (same structure as `primaryAction`)
+</ParamField>
+
+### Usage
+
+```tsx
+import ErrorState from '@/src/components/ui/ErrorState';
+import { CameraOff, Settings } from 'lucide-react-native';
+import { Linking } from 'react-native';
+
+export default function CameraError() {
+  return (
+    <ErrorState
+      icon={<CameraOff size={60} color={Brand.primary} strokeWidth={1.4} />}
+      title="Camara bloqueada"
+      message="TableOrder necesita acceso a la camara para escanear el codigo QR de tu mesa."
+      primaryAction={{
+        label: 'Abrir configuracion',
+        onPress: () => Linking.openSettings(),
+        icon: <Settings size={16} color="#fff" strokeWidth={2} />,
+      }}
+      secondaryAction={{
+        label: 'Como habilitar la camara?',
+        onPress: () => Linking.openURL('https://help.example.com'),
+      }}
+    />
+  );
+}
+```
+
+### Visual hierarchy
+
+1. Icon (60px size)
+2. Title (22px, bold, primary text color)
+3. Message (15px, secondary text color, centered)
+4. Primary button (filled, brand color)
+5. Secondary button (text only, secondary color)
+
+### Button styling
+
+**Primary button:**
+- Background: `Brand.primary`
+- Text color: White
+- Padding: 32px horizontal, 14px vertical
+- Border radius: 14px
+- Optional icon on the left
+
+**Secondary button:**
+- No background (text only)
+- Text color: `Brand.textSecondary`
+- Padding: 10px vertical
+
+---
+
+## ToastMessage
+
+Animated toast notification that slides in from the top for non-blocking feedback.
+
+### Location
+
+`/src/components/ui/ToastMessage.tsx`
+
+### Props
+
+<ParamField path="visible" type="boolean" required>
+  Controls whether the toast is visible. When set to `true`, triggers the entrance animation.
+</ParamField>
+
+<ParamField path="message" type="string" required>
+  The message text to display in the toast. Limited to 2 lines with `numberOfLines={2}`.
+</ParamField>
+
+<ParamField path="onHide" type="() => void" required>
+  Callback function invoked when the exit animation completes. Use this to reset parent component state.
+</ParamField>
+
+<ParamField path="duration" type="number" default={2500}>
+  Auto-dismiss delay in milliseconds. The toast will remain visible for this duration before fading out.
+</ParamField>
+
+### Usage
+
+```tsx
+import { useState, useCallback } from 'react';
+import ToastMessage from '@/src/components/ui/ToastMessage';
+
+export default function ScannerScreen() {
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setToastVisible(true);
+  }, []);
+
+  const onToastHide = useCallback(() => {
+    setToastVisible(false);
+    // Reset any other state here
+  }, []);
+
+  return (
+    <View>
+      {/* Your main content */}
+      <ToastMessage
+        visible={toastVisible}
+        message={toastMessage}
+        onHide={onToastHide}
+        duration={2000}
+      />
+    </View>
+  );
+}
+```
+
+### Animation sequence
+
+The toast uses `react-native-reanimated` with a three-phase sequence:
+
+1. **Enter** (250ms): Fade in and slide down from -20px to 0px
+2. **Hold** (duration): Remain visible at full opacity
+3. **Exit** (300ms): Fade out and slide back up to -20px, then call `onHide`
+
+```tsx
+opacity.value = withSequence(
+  withTiming(1, { duration: 250 }),        // fade in
+  withTiming(1, { duration: duration }),   // hold
+  withTiming(0, { duration: 300 }, (finished) => {
+    if (finished) runOnJS(onHide)();       // cleanup
+  })
+);
+```
+
+### Visual styling
+
+- Position: Absolute, 20px from top and sides
+- Background: Dark semi-transparent (`rgba(30, 30, 30, 0.95)`)
+- Border radius: 14px
+- Border: 1px, `Brand.border` color
+- Shadow: Elevated with 8px elevation
+- Icon: Alert circle, 18px, white
+- Text: White, 14px, 2 lines max
+- Layout: Horizontal row with 10px gap
+- Z-index: 999 (top layer)
+- Pointer events: None (non-interactive)
+
+### Lifecycle integration
+
+The `onHide` callback allows parent components to clean up state after the toast exits:
+
+```tsx
+const onToastHide = useCallback(() => {
+  setToastVisible(false);
+  setScanState('idle');         // reset to neutral
+  isProcessing.current = false; // unlock scanner
+}, []);
+```
+
+### Dependencies
+
+All UI components use:
+- `react-native`: Core mobile components
+- `react-native-reanimated`: Smooth animations
+- `lucide-react-native`: Icon library
+- `@/constants/Colors`: Brand color constants

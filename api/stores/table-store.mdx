@@ -1,0 +1,135 @@
+---
+title: useTableStore
+description: Manages current table session state for QR-scanned table ordering
+---
+
+## Overview
+
+The `useTableStore` hook manages table session state in the TableOrder app. It stores the currently scanned table and tracks whether a dining session is active.
+
+## Usage
+
+```tsx
+import { useTableStore } from '@/src/stores/useTableStore';
+
+function CameraScanner() {
+  const setTable = useTableStore((s) => s.setTable);
+  const router = useRouter();
+
+  const handleBarCodeScanned = ({ data }: BarCodeScanningResult) => {
+    setTable(data);
+    router.replace('/menu');
+  };
+
+  return (
+    <CameraView
+      onBarcodeScanned={handleBarCodeScanned}
+      barcodeScannerSettings={{
+        barcodeTypes: ['qr'],
+      }}
+    />
+  );
+}
+```
+
+## State properties
+
+<ResponseField name="currentTable" type="TableData | null">
+  The currently active table session, or null if no table is selected
+</ResponseField>
+
+<ResponseField name="isSessionActive" type="boolean">
+  Whether a table session is currently active
+</ResponseField>
+
+## Actions
+
+### setTable
+
+Sets the current table by looking up the table ID in the mock data. Automatically activates the session if the table exists.
+
+<ParamField path="id" type="string" required>
+  The table identifier from the QR code scan
+</ParamField>
+
+```tsx
+const setTable = useTableStore((s) => s.setTable);
+setTable('TABLE_001');
+```
+
+### clearSession
+
+Clears the current table session and deactivates the session state.
+
+```tsx
+const clearSession = useTableStore((s) => s.clearSession);
+clearSession();
+```
+
+## Real-world example
+
+```tsx
+import { useTableStore } from '@/src/stores/useTableStore';
+import { useCartStore } from '@/src/stores/useCartStore';
+
+function PaymentScreen() {
+  const currentTable = useTableStore((s) => s.currentTable);
+  const clearSession = useTableStore((s) => s.clearSession);
+  const resetCart = useCartStore((s) => s.resetCart);
+
+  const handlePaymentSuccess = () => {
+    clearSession();
+    resetCart();
+    router.replace('/');
+  };
+
+  return (
+    <View>
+      {currentTable && (
+        <Text>Table: {currentTable.displayName}</Text>
+      )}
+      <Button onPress={handlePaymentSuccess} title="Complete Order" />
+    </View>
+  );
+}
+```
+
+## Integration with menu logic
+
+```tsx
+import { useTableStore } from '@/src/stores/useTableStore';
+import { useCartStore } from '@/src/stores/useCartStore';
+
+function useMenuLogic() {
+  const currentTable = useTableStore((s) => s.currentTable);
+  const setTable = useTableStore((s) => s.setTable);
+  const setBirthdayMode = useCartStore((s) => s.setBirthdayMode);
+
+  useEffect(() => {
+    if (!currentTable) return;
+
+    const isBirthday = currentTable.specialEvent === 'BIRTHDAY';
+    if (isBirthday && currentTable.discount) {
+      setBirthdayMode(true, currentTable.discount);
+    }
+  }, [currentTable, setBirthdayMode]);
+}
+```
+
+## Type definitions
+
+```typescript
+type TableStatus = 'FREE' | 'OCCUPIED' | 'PAYING';
+type MenuType = 'FULL' | 'DRINKS_ONLY';
+type SpecialEvent = 'NONE' | 'BIRTHDAY';
+
+interface TableData {
+  id: string;
+  displayName: string;
+  status: TableStatus;
+  menuType: MenuType;
+  specialEvent: SpecialEvent;
+  discount?: number;
+  animation?: 'cake';
+}
+```

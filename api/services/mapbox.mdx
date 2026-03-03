@@ -1,0 +1,148 @@
+---
+title: Mapbox service
+description: Calculate delivery routes, distances, ETAs, and shipping costs using the Mapbox Directions API
+---
+
+The Mapbox service provides routing functionality for delivery orders. It fetches driving routes between two coordinates, decodes polyline geometry, and calculates delivery information including ETA and shipping costs.
+
+## Functions
+
+### getDeliveryRoute
+
+Fetches a driving route from origin (restaurant) to destination (customer) and returns structured delivery information.
+
+```typescript
+getDeliveryRoute(
+  origin: Coordinates,
+  destination: Coordinates
+): Promise<DeliveryInfo>
+```
+
+<ParamField path="origin" type="Coordinates" required>
+  Restaurant coordinates in WGS-84 format
+  
+  <Expandable title="properties">
+    <ParamField path="latitude" type="number" required>
+      Geographic latitude
+    </ParamField>
+    <ParamField path="longitude" type="number" required>
+      Geographic longitude
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="destination" type="Coordinates" required>
+  Customer delivery coordinates in WGS-84 format
+  
+  <Expandable title="properties">
+    <ParamField path="latitude" type="number" required>
+      Geographic latitude
+    </ParamField>
+    <ParamField path="longitude" type="number" required>
+      Geographic longitude
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="DeliveryInfo" type="object">
+  Complete delivery route information
+  
+  <Expandable title="properties">
+    <ResponseField name="distanceKm" type="number">
+      Total distance in kilometers (rounded to 2 decimal places)
+    </ResponseField>
+    <ResponseField name="etaMinutes" type="number">
+      Estimated time of arrival in minutes (rounded up)
+    </ResponseField>
+    <ResponseField name="polyline" type="string">
+      Encoded polyline string from Mapbox API (precision 5)
+    </ResponseField>
+    <ResponseField name="decodedRoute" type="Coordinates[]">
+      Array of coordinates ready for react-native-maps rendering
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```typescript
+import { getDeliveryRoute } from '@/src/lib/services/mapboxService';
+
+const restaurantLocation = {
+  latitude: 40.7128,
+  longitude: -74.0060
+};
+
+const customerLocation = {
+  latitude: 40.7580,
+  longitude: -73.9855
+};
+
+const deliveryInfo = await getDeliveryRoute(
+  restaurantLocation,
+  customerLocation
+);
+
+console.log(`Distance: ${deliveryInfo.distanceKm} km`);
+console.log(`ETA: ${deliveryInfo.etaMinutes} minutes`);
+```
+
+#### Errors
+
+<ResponseField name="Error" type="Error">
+  Throws an error in the following cases:
+  
+  - `EXPO_PUBLIC_MAPBOX_TOKEN` is not configured
+  - Mapbox API returns a non-OK status
+  - No route found between the two points
+</ResponseField>
+
+---
+
+### calculateShippingCost
+
+Calculates the shipping cost based on distance using the configured rate per kilometer.
+
+```typescript
+calculateShippingCost(distanceKm: number): number
+```
+
+<ParamField path="distanceKm" type="number" required>
+  Distance in kilometers (typically from `DeliveryInfo.distanceKm`)
+</ParamField>
+
+<ResponseField name="cost" type="number">
+  Shipping cost in currency units (rounded to 2 decimal places)
+</ResponseField>
+
+#### Example
+
+```typescript
+import { getDeliveryRoute, calculateShippingCost } from '@/src/lib/services/mapboxService';
+
+const deliveryInfo = await getDeliveryRoute(origin, destination);
+const shippingCost = calculateShippingCost(deliveryInfo.distanceKm);
+
+console.log(`Shipping cost: $${shippingCost}`);
+```
+
+## Configuration
+
+The service requires a Mapbox API token configured in the environment:
+
+```bash
+EXPO_PUBLIC_MAPBOX_TOKEN=your_mapbox_token_here
+```
+
+The shipping cost calculation uses the rate from `Config.restaurant.costPerKm`. Refer to SETUP2.md for complete configuration details.
+
+## API reference
+
+This service uses the Mapbox Directions API v5:
+
+```
+GET /directions/v5/mapbox/driving/{lon1},{lat1};{lon2},{lat2}
+  ?geometries=polyline&overview=full&access_token={TOKEN}
+```
+
+Base URL: `https://api.mapbox.com`

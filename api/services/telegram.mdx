@@ -1,0 +1,186 @@
+---
+title: Telegram service
+description: Send PDF receipts to Telegram chats using the Bot API
+---
+
+The Telegram service sends PDF ticket files directly to a configured Telegram chat using the Bot API. It handles multipart form data uploads and provides graceful error handling to never interrupt the user experience.
+
+## Functions
+
+### sendTicketToTelegram
+
+Sends a PDF file to the configured Telegram chat with a formatted caption.
+
+```typescript
+sendTicketToTelegram(pdfUri: string): Promise<void>
+```
+
+<ParamField path="pdfUri" type="string" required>
+  Local file URI returned by expo-print (e.g., `file:///path/to/ticket.pdf`)
+</ParamField>
+
+<ResponseField name="void" type="void">
+  Returns void. Errors are logged to console but never thrown.
+</ResponseField>
+
+#### Example
+
+```typescript
+import { generateTicketPDF } from '@/src/lib/services/pdfService';
+import { sendTicketToTelegram } from '@/src/lib/services/telegramService';
+
+// Generate the PDF receipt
+const pdfUri = await generateTicketPDF(orderData);
+
+// Send to Telegram (fire and forget)
+await sendTicketToTelegram(pdfUri);
+```
+
+#### Complete payment flow
+
+```typescript
+import { processMockPayment } from '@/src/lib/core/payments/paymentService';
+import { generateTicketPDF } from '@/src/lib/services/pdfService';
+import { sendTicketToTelegram } from '@/src/lib/services/telegramService';
+
+const paymentResult = await processMockPayment(totalAmount);
+
+if (paymentResult.success) {
+  // Generate PDF
+  const ticketUri = await generateTicketPDF({
+    items: cartItems,
+    subtotal,
+    discount,
+    total,
+    shippingCost,
+    serviceType: 'DELIVERY'
+  });
+  
+  // Send to Telegram (non-blocking)
+  await sendTicketToTelegram(ticketUri);
+  
+  // Continue with success flow
+  router.push('/payment-success');
+}
+```
+
+## Behavior
+
+### Silent failure
+
+The function **never throws errors** to avoid interrupting the payment success flow. All errors are logged to console:
+
+```typescript
+try {
+  // ... upload logic
+} catch (err) {
+  console.error('[Telegram] sendTicketToTelegram error:', err);
+}
+```
+
+### Missing credentials
+
+If bot credentials are not configured, the function logs a warning and returns early:
+
+```typescript
+if (!botToken || !chatId) {
+  console.warn('[Telegram] Bot credentials not configured. See SETUP2.md.');
+  return;
+}
+```
+
+### File upload format
+
+The function constructs a FormData object compatible with React Native:
+
+```typescript
+const formData = new FormData();
+formData.append('chat_id', chatId);
+formData.append('document', {
+  uri: pdfUri,
+  name: `ticket_orden_${Date.now()}.pdf`,
+  type: 'application/pdf',
+} as unknown as Blob);
+```
+
+### Caption format
+
+Each PDF is sent with a Spanish-language caption:
+
+```
+Ticket de pago — [Restaurant Name]
+[Date/Time in es-ES format]
+```
+
+Example:
+```
+Ticket de pago — La Cocina
+3/3/2026, 14:32:15
+```
+
+## Configuration
+
+The service requires two environment variables:
+
+```bash
+EXPO_PUBLIC_TELEGRAM_BOT_TOKEN=your_bot_token_here
+EXPO_PUBLIC_TELEGRAM_CHAT_ID=your_chat_id_here
+```
+
+And uses one config value:
+- `Config.restaurant.name` - Included in the PDF caption
+
+### Getting credentials
+
+1. **Create a bot**: Message [@BotFather](https://t.me/botfather) on Telegram and use `/newbot`
+2. **Get token**: BotFather will provide a token like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`
+3. **Get chat ID**: 
+   - Add your bot to a group or message it directly
+   - Visit `https://api.telegram.org/bot<TOKEN>/getUpdates`
+   - Find the chat ID in the response
+
+Refer to SETUP2.md for detailed setup instructions.
+
+## API reference
+
+This service uses the Telegram Bot API:
+
+```
+POST https://api.telegram.org/bot{TOKEN}/sendDocument
+```
+
+**Request format**: `multipart/form-data`
+
+**Form fields**:
+- `chat_id` (string) - Target chat identifier
+- `document` (file) - PDF file to send
+- `caption` (string) - Optional message to accompany the file
+
+**Response**: JSON object with the sent message details (not parsed by this service)
+
+## Error handling
+
+Possible error scenarios (all handled gracefully):
+
+- Missing credentials → Warning logged, function returns
+- Network failure → Error logged to console
+- Invalid chat ID → Error logged with API response
+- Bot blocked by user → Error logged with API response
+- File too large → Error logged with API response
+
+<Warning>
+  Telegram Bot API limits file uploads to 50 MB. Receipt PDFs are typically under 100 KB, so this is rarely an issue.
+</Warning>
+
+## Best practices
+
+1. **Never await unnecessarily**: Since errors are silent, you can fire-and-forget
+   ```typescript
+   sendTicketToTelegram(pdfUri); // No await needed
+   ```
+
+2. **Test credentials early**: Check console warnings during development
+
+3. **Monitor delivery**: Check your Telegram chat to verify receipts are arriving
+
+4. **Privacy consideration**: Ensure the chat ID is for an authorized recipient (business owner, not customers)

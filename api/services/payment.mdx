@@ -1,0 +1,124 @@
+---
+title: Payment service
+description: Process mock payment transactions with realistic latency and error simulation
+---
+
+The Payment service provides a mock payment processing implementation for testing and development. It simulates payment intent round-trips with realistic latency and random failure scenarios.
+
+## Types
+
+### PaymentResult
+
+Discriminated union representing the outcome of a payment transaction.
+
+```typescript
+type PaymentResult =
+  | { success: true }
+  | { success: false; error: string }
+```
+
+<ResponseField name="PaymentResult" type="union">
+  Payment transaction result
+  
+  <Expandable title="success case">
+    <ResponseField name="success" type="true">
+      Payment completed successfully
+    </ResponseField>
+  </Expandable>
+  
+  <Expandable title="failure case">
+    <ResponseField name="success" type="false">
+      Payment failed
+    </ResponseField>
+    <ResponseField name="error" type="string">
+      Human-readable error message in Spanish
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Functions
+
+### processMockPayment
+
+Simulates a payment intent with realistic latency (2 seconds) and a 15% random failure rate.
+
+```typescript
+processMockPayment(amount: number): Promise<PaymentResult>
+```
+
+<ParamField path="amount" type="number" required>
+  Payment amount in currency units (currently not validated, reserved for future use)
+</ParamField>
+
+<ResponseField name="result" type="PaymentResult">
+  Payment outcome after 2-second delay
+  
+  <Expandable title="properties">
+    <ResponseField name="success" type="boolean">
+      `true` if payment succeeded (85% probability), `false` otherwise
+    </ResponseField>
+    <ResponseField name="error" type="string" optional>
+      Only present when `success: false`. Contains localized error message
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```typescript
+import { processMockPayment } from '@/src/lib/core/payments/paymentService';
+
+const result = await processMockPayment(45.50);
+
+if (result.success) {
+  console.log('Payment successful!');
+  // Navigate to success screen
+} else {
+  console.error('Payment failed:', result.error);
+  // Show error message to user
+  alert(result.error);
+}
+```
+
+#### Type guard usage
+
+```typescript
+const result = await processMockPayment(totalAmount);
+
+// TypeScript narrows the type based on success field
+if (result.success) {
+  // result is { success: true }
+  showSuccessNotification();
+} else {
+  // result is { success: false; error: string }
+  showErrorMessage(result.error);
+}
+```
+
+## Behavior
+
+### Latency simulation
+
+All payment requests include a 2-second delay (`setTimeout`) to simulate network round-trip and payment processor latency.
+
+### Failure simulation
+
+The service has a 15% random failure rate (`Math.random() > 0.15`). Failed payments return the following Spanish error message:
+
+```
+Lo sentimos, el banco rechazo la transaccion. Intenta con otro metodo.
+```
+
+<Note>
+  This mock service is intended for development and testing only. Replace with a real payment processor (Stripe, PayPal, etc.) in production.
+</Note>
+
+## Production considerations
+
+When replacing this service with a real payment processor:
+
+1. Maintain the same `PaymentResult` type signature for minimal refactoring
+2. Handle additional error cases (network failures, declined cards, etc.)
+3. Implement proper error logging and monitoring
+4. Add PCI compliance requirements
+5. Implement idempotency for retry scenarios

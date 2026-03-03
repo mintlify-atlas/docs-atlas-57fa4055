@@ -1,0 +1,194 @@
+---
+title: useLocationStore
+description: GPS-based location state management for geofencing and delivery routing
+---
+
+## Overview
+
+The `useLocationStore` hook manages location-based state for the TableOrder app, including GPS coordinates, application mode (determined by geofencing), and delivery route information from the Mapbox API.
+
+## Usage
+
+```tsx
+import { useLocationStore } from '@/src/stores/useLocationStore';
+
+function ContextSwitcher() {
+  const { userLocation, setLocations, setAppMode } = useLocationStore();
+
+  useEffect(() => {
+    (async () => {
+      const coords = await Location.getCurrentPositionAsync();
+      const user = {
+        latitude: coords.coords.latitude,
+        longitude: coords.coords.longitude,
+      };
+      const restaurant = { latitude: 37.7749, longitude: -122.4194 };
+      
+      setLocations(user, restaurant);
+      
+      const distance = calculateDistance(user, restaurant);
+      setAppMode(distance < 0.1 ? 'SCANNER' : 'DELIVERY');
+    })();
+  }, []);
+}
+```
+
+## State properties
+
+<ResponseField name="appMode" type="AppMode">
+  Current application context mode: `'CHECKING'` (initial), `'SCANNER'` (inside restaurant), or `'DELIVERY'` (outside restaurant)
+</ResponseField>
+
+<ResponseField name="userLocation" type="Coordinates | null">
+  User's current GPS coordinates in WGS-84 format
+</ResponseField>
+
+<ResponseField name="restaurantLocation" type="Coordinates | null">
+  Restaurant's GPS coordinates in WGS-84 format
+</ResponseField>
+
+<ResponseField name="deliveryInfo" type="DeliveryInfo | null">
+  Decoded Mapbox Directions API route data including distance, ETA, and polyline coordinates
+</ResponseField>
+
+## Actions
+
+### setLocations
+
+Sets both user and restaurant coordinates simultaneously.
+
+<ParamField path="user" type="Coordinates" required>
+  User's GPS coordinates with latitude and longitude
+</ParamField>
+
+<ParamField path="restaurant" type="Coordinates" required>
+  Restaurant's GPS coordinates with latitude and longitude
+</ParamField>
+
+```tsx
+const { setLocations } = useLocationStore();
+setLocations(
+  { latitude: 37.7749, longitude: -122.4194 },
+  { latitude: 37.7849, longitude: -122.4094 }
+);
+```
+
+### setAppMode
+
+Updates the application context mode based on geofencing logic.
+
+<ParamField path="mode" type="AppMode" required>
+  The mode to set: `'CHECKING'`, `'SCANNER'`, or `'DELIVERY'`
+</ParamField>
+
+```tsx
+const { setAppMode } = useLocationStore();
+setAppMode('DELIVERY');
+```
+
+### setDeliveryRoute
+
+Stores the calculated delivery route information from Mapbox API.
+
+<ParamField path="info" type="DeliveryInfo" required>
+  Complete delivery route metadata including distance, ETA, and decoded polyline
+</ParamField>
+
+```tsx
+const { setDeliveryRoute } = useLocationStore();
+const info = await getDeliveryRoute(restaurantLocation, userLocation);
+setDeliveryRoute(info);
+```
+
+### resetLocation
+
+Resets location state to initial values. Note: preserves `userLocation` for continued tracking.
+
+```tsx
+const resetLocation = useLocationStore((s) => s.resetLocation);
+resetLocation();
+```
+
+## Real-world example
+
+```tsx
+import { useLocationStore } from '@/src/stores/useLocationStore';
+import { useCartStore } from '@/src/stores/useCartStore';
+import { getDeliveryRoute, calculateShippingCost } from '@/src/lib/api';
+import { useEffect } from 'react';
+
+function DeliveryCatalog() {
+  const { userLocation, restaurantLocation, deliveryInfo, setDeliveryRoute } =
+    useLocationStore();
+  const { setShippingCost } = useCartStore();
+
+  // Fetch the Mapbox route as soon as both coordinates are known
+  useEffect(() => {
+    if (!userLocation || !restaurantLocation || deliveryInfo) return;
+
+    (async () => {
+      try {
+        const info = await getDeliveryRoute(restaurantLocation, userLocation);
+        setDeliveryRoute(info);
+        setShippingCost(calculateShippingCost(info.distanceKm));
+      } catch (error) {
+        console.error('Failed to fetch delivery route:', error);
+      }
+    })();
+  }, [userLocation, restaurantLocation, deliveryInfo]);
+
+  return (
+    <View>
+      {deliveryInfo && (
+        <>
+          <Text>Distance: {deliveryInfo.distanceKm.toFixed(1)} km</Text>
+          <Text>ETA: {deliveryInfo.etaMinutes} min</Text>
+        </>
+      )}
+    </View>
+  );
+}
+```
+
+## Checking app mode on home screen
+
+```tsx
+import { useLocationStore } from '@/src/stores/useLocationStore';
+
+function HomeScreen() {
+  const appMode = useLocationStore((s) => s.appMode);
+
+  if (appMode === 'CHECKING') {
+    return <LoadingSpinner text="Detecting location..." />;
+  }
+
+  if (appMode === 'SCANNER') {
+    return <ScannerPrompt />;
+  }
+
+  return <DeliveryOptions />;
+}
+```
+
+## Type definitions
+
+```typescript
+/** Application context mode determined by GPS-based geofencing */
+type AppMode = 'CHECKING' | 'SCANNER' | 'DELIVERY';
+
+/** WGS-84 geographic coordinates */
+interface Coordinates {
+  latitude: number;
+  longitude: number;
+}
+
+/** Decoded Mapbox Directions route metadata */
+interface DeliveryInfo {
+  distanceKm: number;
+  etaMinutes: number;
+  /** Encoded polyline string from Mapbox API */
+  polyline: string;
+  /** Decoded array of coordinates ready for react-native-maps <Polyline /> */
+  decodedRoute: Coordinates[];
+}
+```

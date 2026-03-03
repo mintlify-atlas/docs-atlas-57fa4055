@@ -1,0 +1,197 @@
+---
+title: Environment variables
+description: Configure API credentials and service tokens for TableOrder
+---
+
+TableOrder uses environment variables to securely manage API credentials and service tokens. All sensitive configuration is stored in a `.env` file that is git-ignored to prevent accidental exposure.
+
+## Initial setup
+
+<Steps>
+  <Step title="Copy the example file">
+    Create your local environment file from the template:
+    
+    ```bash
+    cp .env.example .env
+    ```
+    
+    <Warning>
+      Never commit the `.env` file to version control. It should remain git-ignored to protect your API keys.
+    </Warning>
+  </Step>
+  
+  <Step title="Fill in your credentials">
+    Open `.env` in your editor and replace all placeholder values with your actual API keys. See the sections below for where to obtain each credential.
+  </Step>
+  
+  <Step title="Rebuild native code">
+    After configuring environment variables, rebuild the native app to ensure build-time tokens are properly injected:
+    
+    ```bash
+    npx expo prebuild
+    ```
+  </Step>
+</Steps>
+
+## Environment variables reference
+
+### Stripe configuration
+
+<ParamField path="EXPO_PUBLIC_STRIPE_KEY" type="string" required={false}>
+  Stripe publishable key for payment processing. Use test mode keys (`pk_test_...`) during development and live keys (`pk_live_...`) in production.
+  
+  **Where to get it:** [Stripe Dashboard → API Keys](https://dashboard.stripe.com/test/apikeys)
+  
+  **Format:** `pk_test_51ABC...` or `pk_live_51ABC...`
+  
+  <Info>
+    The app will function without this key, but payment features will be limited to mock processing.
+  </Info>
+</ParamField>
+
+### Mapbox configuration
+
+<ParamField path="EXPO_PUBLIC_MAPBOX_TOKEN" type="string" required={true}>
+  Mapbox public token used for runtime map rendering and the Directions API. This token is exposed in the compiled app bundle.
+  
+  **Where to get it:** [Mapbox Account → Access Tokens](https://account.mapbox.com/access-tokens/)
+  
+  **Format:** `pk.eyJ1IjoiY...`
+  
+  **Scopes required:**
+  - Default public token (all public scopes included)
+  
+  <Warning>
+    The app cannot function without this token. Map rendering and delivery route calculation will fail.
+  </Warning>
+</ParamField>
+
+<ParamField path="RNMAPBOX_MAPS_DOWNLOAD_TOKEN" type="string" required={true}>
+  Mapbox secret token used exclusively at **build time** to download the native Maps SDK. This token is never bundled with the app.
+  
+  **Where to get it:** [Mapbox Account → Access Tokens](https://account.mapbox.com/access-tokens/) → Create a secret token
+  
+  **Format:** `sk.eyJ1IjoiY...`
+  
+  **Scopes required:**
+  - `DOWNLOADS:READ`
+  
+  <Info>
+    This token is automatically read by the `@rnmapbox/maps` plugin during prebuild. No additional plugin configuration is needed.
+  </Info>
+</ParamField>
+
+### Telegram bot configuration
+
+<ParamField path="EXPO_PUBLIC_TELEGRAM_BOT_TOKEN" type="string" required={false}>
+  Telegram bot token used to send PDF receipts to a specified chat. Obtain this from BotFather.
+  
+  **Where to get it:** Message [@BotFather](https://t.me/BotFather) on Telegram and use the `/newbot` command
+  
+  **Format:** `123456:ABC-DEF1234ghIkl...`
+  
+  <Info>
+    If omitted, the app will skip Telegram dispatch but continue functioning normally.
+  </Info>
+</ParamField>
+
+<ParamField path="EXPO_PUBLIC_TELEGRAM_CHAT_ID" type="string" required={false}>
+  The target chat ID where PDF receipts will be sent. This can be your personal chat ID or a group/channel ID.
+  
+  **Where to get it:** Message [@userinfobot](https://t.me/userinfobot) or [@RawDataBot](https://t.me/RawDataBot) to retrieve your personal chat ID
+  
+  **Format:** Numeric string (e.g., `123456789`)
+  
+  <Info>
+    Both `EXPO_PUBLIC_TELEGRAM_BOT_TOKEN` and `EXPO_PUBLIC_TELEGRAM_CHAT_ID` must be configured for Telegram features to work.
+  </Info>
+</ParamField>
+
+## Example configuration
+
+Here's a complete `.env` file with all variables populated:
+
+```bash
+# Stripe
+EXPO_PUBLIC_STRIPE_KEY=pk_test_51Hn3KLJ9X...
+
+# Mapbox
+EXPO_PUBLIC_MAPBOX_TOKEN=pk.eyJ1IjoidGFibGVvcmRlciIsImEi...
+RNMAPBOX_MAPS_DOWNLOAD_TOKEN=sk.eyJ1IjoidGFibGVvcmRlciIsImEi...
+
+# Telegram Bot
+EXPO_PUBLIC_TELEGRAM_BOT_TOKEN=7341298765:AAHdqTcv...
+EXPO_PUBLIC_TELEGRAM_CHAT_ID=987654321
+```
+
+## Configuration validation
+
+The app reads all environment variables through the centralized `Config` object in `src/lib/core/config.ts`:
+
+```typescript src/lib/core/config.ts
+export const Config = {
+  mapbox: {
+    token: process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '',
+  },
+  telegram: {
+    botToken: process.env.EXPO_PUBLIC_TELEGRAM_BOT_TOKEN ?? '',
+    chatId: process.env.EXPO_PUBLIC_TELEGRAM_CHAT_ID ?? '',
+  },
+  restaurant: {
+    name: 'TableOrder Restaurant',
+    costPerKm: 1.0,
+    geofenceRadiusMeters: 50,
+  },
+} as const;
+```
+
+<Tip>
+  Missing credentials will cause specific features to fail gracefully. Check console warnings at app startup to identify misconfigured variables.
+</Tip>
+
+## Security best practices
+
+<Note>
+  Follow these guidelines to keep your credentials secure:
+  
+  - Never commit `.env` to version control
+  - Use test/development keys during local development
+  - Rotate keys immediately if accidentally exposed
+  - Use separate Stripe accounts for test and production
+  - Restrict Mapbox token scopes to only what's needed
+  - Keep secret tokens (starting with `sk.`) out of client bundles
+</Note>
+
+## Troubleshooting
+
+### Maps not rendering
+
+**Cause:** Missing or invalid `EXPO_PUBLIC_MAPBOX_TOKEN`
+
+**Solution:** Verify the token is copied correctly and has not expired. Check the Mapbox dashboard for token status.
+
+### Build fails with Mapbox SDK download error
+
+**Cause:** Missing or invalid `RNMAPBOX_MAPS_DOWNLOAD_TOKEN` or missing `DOWNLOADS:READ` scope
+
+**Solution:** Create a new secret token with the correct scope in your Mapbox account settings.
+
+### Telegram receipts not sending
+
+**Cause:** Missing or misconfigured `EXPO_PUBLIC_TELEGRAM_BOT_TOKEN` or `EXPO_PUBLIC_TELEGRAM_CHAT_ID`
+
+**Solution:** Verify both values are set and that the bot has permission to send messages to the specified chat. For groups/channels, ensure the bot has been added as a member.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Mapbox setup" icon="map" href="/configuration/mapbox">
+    Configure map rendering and delivery routes
+  </Card>
+  <Card title="Stripe setup" icon="credit-card" href="/configuration/stripe">
+    Set up payment processing
+  </Card>
+  <Card title="Telegram bot" icon="paper-plane" href="/configuration/telegram">
+    Enable receipt dispatch via Telegram
+  </Card>
+</CardGroup>

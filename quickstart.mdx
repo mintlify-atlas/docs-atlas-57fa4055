@@ -1,80 +1,439 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick start
+description: Get TableOrder running in under 5 minutes and test both scanner and delivery modes
 ---
 
-## Get started in three steps
+## Get running in 5 minutes
 
-Get your documentation site running locally and make your first customization.
+This guide will get you from zero to a working TableOrder app with both modes functional.
 
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+<Steps>
+  <Step title="Install and configure">
+    Follow the [installation guide](/installation) to set up your development environment. At minimum, you need:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    ```bash
+    # Clone and install
+    git clone https://github.com/Diego31-10/TableOrderApp.git
+    cd TableOrderApp
+    npm install
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    # Configure environment
+    cp .env.example .env
+    # Add your EXPO_PUBLIC_MAPBOX_TOKEN to .env
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    # Generate native projects
+    npx expo prebuild
+    ```
+    
+    <Note>
+      You must have a valid Mapbox token. Get one free at [account.mapbox.com](https://account.mapbox.com/access-tokens/).
+    </Note>
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Launch the app">
+    Start the development server and run on your device:
+    
+    <CodeGroup>
+      ```bash Android
+      npx expo run:android
+      ```
+      
+      ```bash iOS
+      npx expo run:ios
+      ```
+    </CodeGroup>
+    
+    The app will launch and request location permissions. Grant them to continue.
+  </Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Test scanner mode">
+    When the app opens, you'll see an interactive map with your current location marked. To test scanner mode:
+    
+    1. **Tap a location on the map** within 50 meters of your current position (simulating being inside the restaurant)
+    2. The app automatically switches to **Scanner Mode**
+    3. The QR scanner activates with camera preview
+    
+    <Tip>
+      On emulators, set a custom location first:
+      - **iOS Simulator**: Features > Location > Custom Location
+      - **Android Emulator**: Extended Controls (⋮) > Location
+    </Tip>
+  </Step>
 
-### Step 3: Go live
+  <Step title="Scan a test QR code">
+    Use one of these test QR codes to simulate scanning a table:
+    
+    <Tabs>
+      <Tab title="Full Menu Table">
+        Generate a QR code with this string:
+        ```
+        TABLE_HALL_05
+        ```
+        
+        **Expected behavior**:
+        - Table name: "Salón 05"
+        - Menu: Full catalog (food, drinks, snacks, desserts)
+        - No special effects
+        
+        <Info>
+          Use [qr.io](https://qr.io) or any QR generator to create a scannable code from this string.
+        </Info>
+      </Tab>
+      
+      <Tab title="Drinks Only Table">
+        Generate a QR code with this string:
+        ```
+        TABLE_BAR_01
+        ```
+        
+        **Expected behavior**:
+        - Table name: "Barra 01"
+        - Menu: Drinks only (food items hidden)
+        - No special effects
+      </Tab>
+      
+      <Tab title="Birthday Table">
+        Generate a QR code with this string:
+        ```
+        TABLE_BDAY_99
+        ```
+        
+        **Expected behavior**:
+        - Table name: "Mesa Especial"
+        - Menu: Full catalog
+        - Animated birthday banner appears
+        - 15% automatic discount applied to cart
+      </Tab>
+    </Tabs>
+    
+    After scanning, the contextual menu loads automatically based on the table type.
+  </Step>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+  <Step title="Add items to cart">
+    Browse the menu and add items:
+    
+    1. **Tap any product card** to view details
+    2. **Tap "Add to cart"** to add items
+    3. **Adjust quantities** using + and - buttons
+    4. **Navigate to cart** using the bottom tab bar
+    
+    The cart automatically calculates:
+    - Subtotal
+    - Discount (if birthday table)
+    - Final total
+  </Step>
+
+  <Step title="Complete checkout">
+    Process a test payment:
+    
+    1. **Tap "Proceed to Payment"** in the cart
+    2. Review your order summary
+    3. **Tap "Pay Now"** to trigger the mock payment flow
+    
+    **What happens next**:
+    - 2-second payment simulation with loading state
+    - Success notification with haptic feedback
+    - PDF receipt auto-generated
+    - Receipt sent to Telegram (if configured)
+    - Push notification delivered
+    
+    <Note>
+      The payment service is mocked for testing. To integrate real Stripe payments, add `EXPO_PUBLIC_STRIPE_KEY` to your `.env` file.
+    </Note>
+  </Step>
+
+  <Step title="Test delivery mode">
+    Return to the map and test delivery flow:
+    
+    1. **Tap the home icon** to return to the context switcher
+    2. **Tap a location on the map** farther than 50 meters from your position
+    3. The app automatically switches to **Delivery Mode**
+    4. You're redirected to the full delivery catalog
+    
+    **Delivery features**:
+    - Full product catalog (all items available)
+    - Per-kilometer shipping cost calculated via Mapbox Directions API
+    - Real-time distance and ETA display
+    - Post-payment route tracking with polyline visualization
+  </Step>
+
+  <Step title="View route tracking">
+    After completing a delivery order:
+    
+    1. Payment processes successfully
+    2. App automatically navigates to **Track Order** screen
+    3. Interactive map displays:
+       - Your location (delivery destination)
+       - Restaurant location (pickup point)
+       - Driving route polyline
+       - Distance in kilometers
+       - Estimated delivery time
+    
+    <Tip>
+      Route tracking uses the Mapbox Directions API. Ensure `EXPO_PUBLIC_MAPBOX_TOKEN` is configured for this to work.
+    </Tip>
+  </Step>
+</Steps>
+
+## Understanding the code
+
+### How GPS mode detection works
+
+The app uses Haversine formula to calculate distance between user and restaurant:
+
+```typescript src/components/location/ContextSwitcher.tsx
+function calculateDistance(c1: Coordinates, c2: Coordinates): number {
+  const R = 6_371_000; // Earth radius in meters
+  const φ1 = (c1.latitude * Math.PI) / 180;
+  const φ2 = (c2.latitude * Math.PI) / 180;
+  const Δφ = ((c2.latitude - c1.latitude) * Math.PI) / 180;
+  const Δλ = ((c2.longitude - c1.longitude) * Math.PI) / 180;
+  const a =
+    Math.sin(Δφ / 2) ** 2 +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+```
+
+When you tap the map:
+
+```typescript src/components/location/ContextSwitcher.tsx
+const distanceMeters = calculateDistance(userLocation, tapped);
+
+if (distanceMeters <= Config.restaurant.geofenceRadiusMeters) {
+  // IN-RESTAURANT: Activate scanner mode
+  setAppMode('SCANNER');
+  setServiceType('TABLE');
+} else {
+  // DELIVERY: Show full catalog
+  setAppMode('DELIVERY');
+  setServiceType('DELIVERY');
+  router.push('/(delivery)/delivery-catalog');
+}
+```
+
+<Info>
+  The geofence radius (default: 50m) is configurable in `src/lib/core/config.ts:20`.
+</Info>
+
+### How contextual menus work
+
+Tables have different types that filter the available menu:
+
+```typescript src/lib/core/types.ts
+export type MenuType = 'FULL' | 'DRINKS_ONLY';
+
+export interface TableData {
+  id: string;
+  displayName: string;
+  status: TableStatus;
+  menuType: MenuType;
+  specialEvent: SpecialEvent;
+  discount?: number;
+  animation?: 'cake';
+}
+```
+
+The menu logic hook filters products based on table type:
+
+```typescript src/lib/modules/menu/useMenuLogic.ts
+export function useMenuLogic() {
+  const { activeTable } = useTableStore();
+  const allProducts = PRODUCTS;
+  
+  if (!activeTable) return { products: allProducts };
+  
+  // Filter drinks-only tables
+  if (activeTable.menuType === 'DRINKS_ONLY') {
+    return {
+      products: allProducts.filter(p => p.category === 'DRINK'),
+      discount: activeTable.discount
+    };
+  }
+  
+  // Full menu for dining tables
+  return {
+    products: allProducts,
+    discount: activeTable.discount
+  };
+}
+```
+
+### How state management works
+
+TableOrder uses Zustand for global state with three stores:
+
+<Tabs>
+  <Tab title="Location Store">
+    ```typescript src/stores/useLocationStore.ts
+    interface LocationState {
+      appMode: AppMode;
+      userLocation: Coordinates | null;
+      restaurantLocation: Coordinates | null;
+      deliveryInfo: DeliveryInfo | null;
+      setAppMode: (mode: AppMode) => void;
+      setLocations: (user: Coordinates, restaurant: Coordinates) => void;
+      setDeliveryInfo: (info: DeliveryInfo | null) => void;
+    }
+    
+    export const useLocationStore = create<LocationState>((set) => ({
+      appMode: 'CHECKING',
+      userLocation: null,
+      restaurantLocation: null,
+      deliveryInfo: null,
+      setAppMode: (mode) => set({ appMode: mode }),
+      setLocations: (user, restaurant) => 
+        set({ userLocation: user, restaurantLocation: restaurant }),
+      setDeliveryInfo: (info) => set({ deliveryInfo: info }),
+    }));
+    ```
+    
+    Manages app context mode and GPS coordinates.
+  </Tab>
+  
+  <Tab title="Table Store">
+    ```typescript src/stores/useTableStore.ts
+    interface TableState {
+      activeTable: TableData | null;
+      setActiveTable: (table: TableData) => void;
+      clearTable: () => void;
+    }
+    
+    export const useTableStore = create<TableState>((set) => ({
+      activeTable: null,
+      setActiveTable: (table) => set({ activeTable: table }),
+      clearTable: () => set({ activeTable: null }),
+    }));
+    ```
+    
+    Manages scanned table session.
+  </Tab>
+  
+  <Tab title="Cart Store">
+    ```typescript src/stores/useCartStore.ts
+    interface CartState {
+      items: CartItem[];
+      serviceType: 'TABLE' | 'DELIVERY';
+      addItem: (product: Product) => void;
+      removeItem: (productId: string) => void;
+      updateQuantity: (productId: string, quantity: number) => void;
+      clearCart: () => void;
+      getTotal: () => number;
+    }
+    
+    export const useCartStore = create<CartState>((set, get) => ({
+      items: [],
+      serviceType: 'TABLE',
+      addItem: (product) => { /* ... */ },
+      removeItem: (id) => { /* ... */ },
+      updateQuantity: (id, qty) => { /* ... */ },
+      clearCart: () => set({ items: [] }),
+      getTotal: () => {
+        const { items } = get();
+        return items.reduce((sum, item) => 
+          sum + (item.product.price * item.quantity), 0
+        );
+      },
+    }));
+    ```
+    
+    Manages shopping cart and order totals.
+  </Tab>
+</Tabs>
+
+<Note>
+  Zustand provides zero-boilerplate state management without Provider components. Components re-render only when their selected slice changes.
+</Note>
+
+## Test QR codes reference
+
+All available test codes for scanner mode:
+
+| QR Code | Table Name | Menu Type | Special Effect |
+|---------|------------|-----------|----------------|
+| `TABLE_BAR_01` | Barra 01 | Drinks only | None |
+| `TABLE_HALL_05` | Salón 05 | Full menu | None |
+| `TABLE_BDAY_99` | Mesa Especial | Full menu | Birthday banner + 15% discount |
+
+<Warning>
+  These codes are defined in `src/lib/core/mockData.ts`. You can add more tables by extending the `TABLES` array.
+</Warning>
+
+## Common workflows
+
+### Adding new products
+
+Edit the products array in `src/lib/core/mockData.ts`:
+
+```typescript src/lib/core/mockData.ts
+export const PRODUCTS: Product[] = [
+  {
+    id: 'p01',
+    name: 'Hamburguesa Clásica',
+    price: 12.99,
+    category: 'FOOD',
+    image: 'https://images.unsplash.com/photo-...',
+    description: 'Carne 200g, lechuga, tomate, queso cheddar',
+  },
+  // Add more products here
+];
+```
+
+### Adjusting geofence radius
+
+Modify the configuration in `src/lib/core/config.ts`:
+
+```typescript src/lib/core/config.ts
+export const Config = {
+  restaurant: {
+    name: 'TableOrder Restaurant',
+    costPerKm: 1.0,
+    geofenceRadiusMeters: 100, // Increase to 100 meters
+  },
+} as const;
+```
+
+### Customizing shipping costs
+
+Update the cost multiplier in `src/lib/core/config.ts`:
+
+```typescript src/lib/core/config.ts
+export const Config = {
+  restaurant: {
+    costPerKm: 2.5, // $2.50 per kilometer
+  },
+} as const;
+```
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card
+    title="Architecture guide"
+    icon="diagram-project"
+    href="/architecture/overview"
+  >
+    Understand the feature-based structure and design patterns
+  </Card>
+  <Card
+    title="API reference"
+    icon="code"
+    href="/api/stores/cart-store"
+  >
+    Explore services, stores, and utility functions
+  </Card>
+  <Card
+    title="Core features"
+    icon="sparkles"
+    href="/features/table-mode"
+  >
+    Learn about table mode and delivery mode
+  </Card>
+  <Card
+    title="Configuration"
+    icon="gear"
+    href="/configuration/environment"
+  >
+    Configure Mapbox, Stripe, and Telegram
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

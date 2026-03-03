@@ -1,0 +1,352 @@
+---
+title: Types
+description: TypeScript type definitions for TableOrder domain models
+---
+
+TableOrder uses TypeScript for type safety across the application. All core type definitions are located in `/src/lib/core/types.ts`.
+
+## Table domain
+
+Types for restaurant table management and status.
+
+### TableStatus
+
+```tsx
+type TableStatus = 'FREE' | 'OCCUPIED' | 'PAYING';
+```
+
+Represents the current state of a table:
+
+<ParamField path="FREE" type="string">
+  Table is available and ready for new customers
+</ParamField>
+
+<ParamField path="OCCUPIED" type="string">
+  Table is currently in use by customers
+</ParamField>
+
+<ParamField path="PAYING" type="string">
+  Table is in the payment/checkout process
+</ParamField>
+
+### MenuType
+
+```tsx
+type MenuType = 'FULL' | 'DRINKS_ONLY';
+```
+
+Defines the type of menu available at a table:
+
+<ParamField path="FULL" type="string">
+  Full menu with food, drinks, snacks, and desserts
+</ParamField>
+
+<ParamField path="DRINKS_ONLY" type="string">
+  Limited menu with beverages only
+</ParamField>
+
+### SpecialEvent
+
+```tsx
+type SpecialEvent = 'NONE' | 'BIRTHDAY';
+```
+
+Indicates if a table has a special event:
+
+<ParamField path="NONE" type="string">
+  No special event for this table
+</ParamField>
+
+<ParamField path="BIRTHDAY" type="string">
+  Birthday celebration (triggers discount and special UI)
+</ParamField>
+
+### TableData
+
+```tsx
+interface TableData {
+  id: string;
+  displayName: string;
+  status: TableStatus;
+  menuType: MenuType;
+  specialEvent: SpecialEvent;
+  discount?: number;
+  animation?: 'cake';
+}
+```
+
+Complete table information structure:
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the table (e.g., `"TABLE_01"`)
+</ParamField>
+
+<ParamField path="displayName" type="string" required>
+  Human-readable table name (e.g., `"Mesa 1"`)
+</ParamField>
+
+<ParamField path="status" type="TableStatus" required>
+  Current table status (`FREE`, `OCCUPIED`, or `PAYING`)
+</ParamField>
+
+<ParamField path="menuType" type="MenuType" required>
+  Available menu type (`FULL` or `DRINKS_ONLY`)
+</ParamField>
+
+<ParamField path="specialEvent" type="SpecialEvent" required>
+  Special event type (`NONE` or `BIRTHDAY`)
+</ParamField>
+
+<ParamField path="discount" type="number" optional>
+  Discount amount as a decimal (e.g., `0.15` for 15% off). Only present for birthday tables.
+</ParamField>
+
+<ParamField path="animation" type="'cake'" optional>
+  Animation identifier for special events. Currently only supports `'cake'`.
+</ParamField>
+
+---
+
+## Menu and product domain
+
+Types for product catalog and menu items.
+
+### ProductCategory
+
+```tsx
+type ProductCategory = 'FOOD' | 'DRINK' | 'SNACK' | 'DESSERT';
+```
+
+Product classification:
+
+<ParamField path="FOOD" type="string">
+  Main dishes and entrees
+</ParamField>
+
+<ParamField path="DRINK" type="string">
+  Beverages (alcoholic and non-alcoholic)
+</ParamField>
+
+<ParamField path="SNACK" type="string">
+  Appetizers and small bites
+</ParamField>
+
+<ParamField path="DESSERT" type="string">
+  Sweet treats and desserts
+</ParamField>
+
+### Product
+
+```tsx
+interface Product {
+  id: string;
+  name: string;
+  price: number;
+  category: ProductCategory;
+  image: string;
+  description?: string;
+}
+```
+
+Product information:
+
+<ParamField path="id" type="string" required>
+  Unique product identifier
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Product name displayed to customers
+</ParamField>
+
+<ParamField path="price" type="number" required>
+  Product price in the base currency unit (e.g., dollars/euros)
+</ParamField>
+
+<ParamField path="category" type="ProductCategory" required>
+  Product category for filtering and organization
+</ParamField>
+
+<ParamField path="image" type="string" required>
+  Path or URL to product image
+</ParamField>
+
+<ParamField path="description" type="string" optional>
+  Detailed product description or ingredients list
+</ParamField>
+
+---
+
+## Cart domain
+
+Types for shopping cart and order management.
+
+### CartItem
+
+```tsx
+interface CartItem {
+  product: Product;
+  quantity: number;
+}
+```
+
+Represents a product in the shopping cart:
+
+<ParamField path="product" type="Product" required>
+  Full product object with all details
+</ParamField>
+
+<ParamField path="quantity" type="number" required>
+  Number of units of this product in the cart
+</ParamField>
+
+---
+
+## Location and context-aware domain
+
+Types for GPS-based context switching and delivery routing.
+
+### AppMode
+
+```tsx
+type AppMode = 'CHECKING' | 'SCANNER' | 'DELIVERY';
+```
+
+Application context mode determined by GPS-based geofencing:
+
+<ParamField path="CHECKING" type="string">
+  Initial state while determining user location and proximity
+</ParamField>
+
+<ParamField path="SCANNER" type="string">
+  In-situ mode for customers inside the restaurant. Activates QR code scanner for table selection.
+</ParamField>
+
+<ParamField path="DELIVERY" type="string">
+  Delivery mode for customers outside the geofence radius. Shows delivery menu and routing.
+</ParamField>
+
+### Coordinates
+
+```tsx
+interface Coordinates {
+  latitude: number;
+  longitude: number;
+}
+```
+
+WGS-84 geographic coordinates:
+
+<ParamField path="latitude" type="number" required>
+  Latitude in decimal degrees (range: -90 to 90)
+</ParamField>
+
+<ParamField path="longitude" type="number" required>
+  Longitude in decimal degrees (range: -180 to 180)
+</ParamField>
+
+### DeliveryInfo
+
+```tsx
+interface DeliveryInfo {
+  distanceKm: number;
+  etaMinutes: number;
+  polyline: string;
+  decodedRoute: Coordinates[];
+}
+```
+
+Decoded Mapbox Directions route metadata:
+
+<ParamField path="distanceKm" type="number" required>
+  Total delivery distance in kilometers
+</ParamField>
+
+<ParamField path="etaMinutes" type="number" required>
+  Estimated time of arrival in minutes
+</ParamField>
+
+<ParamField path="polyline" type="string" required>
+  Encoded polyline string from Mapbox API (RFC 1952 encoded geometry)
+</ParamField>
+
+<ParamField path="decodedRoute" type="Coordinates[]" required>
+  Decoded array of coordinates ready for rendering with `react-native-maps` `<Polyline />` component
+</ParamField>
+
+---
+
+## Usage examples
+
+### Table data
+
+```tsx
+import { TableData } from '@/src/lib/core/types';
+
+const birthdayTable: TableData = {
+  id: 'TABLE_01',
+  displayName: 'Mesa 1',
+  status: 'OCCUPIED',
+  menuType: 'FULL',
+  specialEvent: 'BIRTHDAY',
+  discount: 0.15,
+  animation: 'cake',
+};
+```
+
+### Product catalog
+
+```tsx
+import { Product } from '@/src/lib/core/types';
+
+const pizza: Product = {
+  id: 'FOOD_001',
+  name: 'Pizza Margherita',
+  price: 12.99,
+  category: 'FOOD',
+  image: '/images/pizza.jpg',
+  description: 'Classic tomato, mozzarella, and basil',
+};
+```
+
+### Cart management
+
+```tsx
+import { CartItem } from '@/src/lib/core/types';
+
+const cartItem: CartItem = {
+  product: pizza,
+  quantity: 2,
+};
+```
+
+### GPS coordinates
+
+```tsx
+import { Coordinates, calculateDistance } from '@/src/lib/core/types';
+
+const userLocation: Coordinates = {
+  latitude: 40.7128,
+  longitude: -74.0060,
+};
+
+const restaurantLocation: Coordinates = {
+  latitude: 40.7589,
+  longitude: -73.9851,
+};
+```
+
+### Delivery routing
+
+```tsx
+import { DeliveryInfo } from '@/src/lib/core/types';
+
+const deliveryRoute: DeliveryInfo = {
+  distanceKm: 3.2,
+  etaMinutes: 15,
+  polyline: 'encoded_polyline_string...',
+  decodedRoute: [
+    { latitude: 40.7128, longitude: -74.0060 },
+    { latitude: 40.7589, longitude: -73.9851 },
+  ],
+};
+```

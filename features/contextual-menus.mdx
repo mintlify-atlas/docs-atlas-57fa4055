@@ -1,0 +1,366 @@
+---
+title: Contextual menus
+description: Dynamic menu filtering based on table type and special events
+---
+
+Contextual menus adapt the product catalog based on the customer's table type and special events. A bar table shows only drinks, a dining table shows all categories, and a birthday table adds an automatic discount with animated banner.
+
+## How it works
+
+The menu filtering logic is centralized in the `useMenuLogic` hook (src/lib/modules/menu/useMenuLogic.ts):
+
+```typescript
+export function useMenuLogic() {
+  const { tableId } = useLocalSearchParams<{ tableId?: string }>();
+  const currentTable = useTableStore((s) => s.currentTable);
+  const setBirthdayMode = useCartStore((s) => s.setBirthdayMode);
+
+  // Filter products based on the table's menuType
+  const products: Product[] =
+    currentTable?.menuType === 'DRINKS_ONLY'
+      ? PRODUCTS.filter((p) => p.category === 'DRINK')
+      : PRODUCTS;
+
+  // Group by category for section rendering
+  const sections = [
+    { key: 'FOOD', title: 'Platos', data: products.filter((p) => p.category === 'FOOD') },
+    { key: 'SNACK', title: 'Snacks', data: products.filter((p) => p.category === 'SNACK') },
+    { key: 'DRINK', title: 'Bebidas', data: products.filter((p) => p.category === 'DRINK') },
+    { key: 'DESSERT', title: 'Postres', data: products.filter((p) => p.category === 'DESSERT') },
+  ].filter((s) => s.data.length > 0);
+
+  return { table: currentTable, sections, isBirthdayMode, discount };
+}
+```
+
+<Info>
+Empty sections are automatically filtered out with `.filter((s) => s.data.length > 0)`. This ensures bar tables don't show empty "Food" or "Desserts" sections.
+</Info>
+
+## Menu types
+
+### Full menu
+
+Tables with `menuType: 'FULL'` display all product categories:
+
+<Steps>
+  <Step title="Product fetch">
+    All products are loaded from `PRODUCTS` array (src/lib/core/mockData.ts)
+  </Step>
+  <Step title="Category grouping">
+    Products are grouped into four sections:
+    - **Food:** Main dishes (category: `FOOD`)
+    - **Snacks:** Appetizers and sides (category: `SNACK`)
+    - **Drinks:** Beverages (category: `DRINK`)
+    - **Desserts:** Sweets (category: `DESSERT`)
+  </Step>
+  <Step title="Rendering">
+    The menu component renders a `SectionList` with category headers
+  </Step>
+</Steps>
+
+**Example table:**
+```typescript
+{
+  id: 'TABLE_HALL_05',
+  displayName: 'Salon 05',
+  menuType: 'FULL',
+  status: 'FREE',
+  specialEvent: 'NONE'
+}
+```
+
+### Drinks only
+
+Bar tables with `menuType: 'DRINKS_ONLY'` show only beverages:
+
+```typescript src/lib/modules/menu/useMenuLogic.ts
+const products: Product[] =
+  currentTable?.menuType === 'DRINKS_ONLY'
+    ? PRODUCTS.filter((p) => p.category === 'DRINK')
+    : PRODUCTS;
+```
+
+This filtering happens **before** category grouping, so the sections array only contains the "Bebidas" section.
+
+**Example table:**
+```typescript
+{
+  id: 'TABLE_BAR_01',
+  displayName: 'Barra 01',
+  menuType: 'DRINKS_ONLY',
+  status: 'FREE',
+  specialEvent: 'NONE'
+}
+```
+
+<Warning>
+Customers at drinks-only tables cannot add food to their cart. The products simply don't appear in the menu.
+</Warning>
+
+## Special events
+
+### Birthday mode
+
+Tables with `specialEvent: 'BIRTHDAY'` trigger special behavior:
+
+<Tabs>
+  <Tab title="Discount activation">
+    The discount is activated as soon as the table is loaded (src/lib/modules/menu/useMenuLogic.ts:22):
+
+    ```typescript
+    useEffect(() => {
+      if (!currentTable) return;
+      if (currentTable.specialEvent === 'BIRTHDAY') {
+        setBirthdayMode(true, currentTable.discount ?? 0);
+      } else {
+        setBirthdayMode(false, 0);
+      }
+    }, [currentTable?.id]);
+    ```
+
+    Default discount: **15% (0.15)**
+  </Tab>
+
+  <Tab title="Visual feedback">
+    A `BirthdayBanner` component renders at the top of the menu with:
+    - Animated cake emoji
+    - "Feliz Cumpleaños" message
+    - Discount percentage display
+  </Tab>
+
+  <Tab title="Cart calculation">
+    The discount is applied to the cart subtotal (src/stores/useCartStore.ts:19):
+
+    ```typescript
+    function calcTotal(items: CartItem[], discount: number): number {
+      const subtotal = items.reduce(
+        (sum, item) => sum + item.product.price * item.quantity,
+        0
+      );
+      return parseFloat((subtotal * (1 - discount)).toFixed(2));
+    }
+    ```
+
+    **Example:**
+    - Subtotal: $100.00
+    - Discount: 15%
+    - Total: $85.00
+  </Tab>
+</Tabs>
+
+**Example table:**
+```typescript
+{
+  id: 'TABLE_BDAY_99',
+  displayName: 'Mesa Especial',
+  menuType: 'FULL',
+  status: 'FREE',
+  specialEvent: 'BIRTHDAY',
+  discount: 0.15,
+  animation: 'cake'
+}
+```
+
+## Product structure
+
+Products are defined with the `Product` type (src/lib/core/types.ts:23):
+
+```typescript
+export interface Product {
+  id: string;
+  name: string;
+  price: number;
+  category: ProductCategory;
+  image: string;
+  description?: string;
+}
+
+export type ProductCategory = 'FOOD' | 'DRINK' | 'SNACK' | 'DESSERT';
+```
+
+**Example product:**
+```typescript
+{
+  id: 'PROD_001',
+  name: 'Burger Clásica',
+  price: 12.50,
+  category: 'FOOD',
+  image: require('@/assets/products/burger.jpg'),
+  description: 'Carne Angus, queso cheddar, lechuga, tomate'
+}
+```
+
+## State management
+
+The menu system uses three stores:
+
+### Table store
+
+```typescript src/stores/useTableStore.ts
+const currentTable = useTableStore((s) => s.currentTable);
+```
+
+Stores the active `TableData` object with:
+- `id`: QR code string
+- `displayName`: Human-readable table name
+- `menuType`: `'FULL'` | `'DRINKS_ONLY'`
+- `specialEvent`: `'NONE'` | `'BIRTHDAY'`
+- `discount`: Optional discount percentage (0.15 = 15%)
+
+### Cart store
+
+```typescript src/stores/useCartStore.ts
+interface CartState {
+  items: CartItem[];
+  isBirthdayMode: boolean;
+  discount: number;
+  total: number;
+  addItem: (product: Product) => void;
+  removeItem: (productId: string) => void;
+}
+```
+
+### Adding items to cart
+
+```typescript src/stores/useCartStore.ts
+addItem: (product: Product) => {
+  const { items, discount } = get();
+  const existing = items.find((i) => i.product.id === product.id);
+  const updated = existing
+    ? items.map((i) =>
+        i.product.id === product.id
+          ? { ...i, quantity: i.quantity + 1 }
+          : i
+      )
+    : [...items, { product, quantity: 1 }];
+
+  set({ items: updated, total: calcTotal(updated, discount) });
+}
+```
+
+<Info>
+The cart automatically recalculates the total whenever items are added or removed, respecting the current discount if birthday mode is active.
+</Info>
+
+## Menu rendering
+
+The menu screen uses a `SectionList` to render categorized products:
+
+```typescript
+<SectionList
+  sections={sections}
+  keyExtractor={(item) => item.id}
+  renderItem={({ item }) => <ProductCard product={item} />}
+  renderSectionHeader={({ section: { title } }) => (
+    <Text style={styles.sectionHeader}>{title}</Text>
+  )}
+  ListHeaderComponent={
+    isBirthdayMode ? <BirthdayBanner discount={discount} /> : null
+  }
+/>
+```
+
+## Delivery mode menus
+
+In delivery mode, the menu always shows the **full catalog** regardless of table type, since there is no table (src/components/location/ContextSwitcher.tsx:92):
+
+```typescript
+if (distanceMeters > Config.restaurant.geofenceRadiusMeters) {
+  setAppMode('DELIVERY');
+  setServiceType('DELIVERY');
+  // No table is set, so menuType filtering doesn't apply
+}
+```
+
+The delivery catalog component loads all products directly:
+```typescript
+const allProducts = PRODUCTS; // No filtering
+```
+
+## Edge cases
+
+### Deep links
+
+If the user opens a deep link directly to the menu without scanning a QR code, the hook hydrates the table from route params (src/lib/modules/menu/useMenuLogic.ts:15):
+
+```typescript
+const { tableId } = useLocalSearchParams<{ tableId?: string }>();
+
+useEffect(() => {
+  if (tableId && (!currentTable || currentTable.id !== tableId)) {
+    setTable(tableId);
+  }
+}, [tableId]);
+```
+
+### Missing table
+
+If `currentTable` is `null`, the menu defaults to showing all products (full menu):
+
+```typescript
+const products: Product[] =
+  currentTable?.menuType === 'DRINKS_ONLY'
+    ? PRODUCTS.filter((p) => p.category === 'DRINK')
+    : PRODUCTS;
+```
+
+The `?.` optional chaining ensures the code doesn't crash.
+
+### Birthday mode cleanup
+
+Birthday mode is cleared when the session ends (src/stores/useCartStore.ts:66):
+
+```typescript
+resetCart: () => {
+  set({
+    items: [],
+    total: 0,
+    isBirthdayMode: false,
+    discount: 0,
+  });
+}
+```
+
+## Testing different menu types
+
+<Steps>
+  <Step title="Scan a bar table QR code">
+    Use QR code `TABLE_BAR_01` to test drinks-only menu
+  </Step>
+  <Step title="Verify only drinks appear">
+    The menu should show only the "Bebidas" section
+  </Step>
+  <Step title="Scan a dining table QR code">
+    Use QR code `TABLE_HALL_05` to test full menu
+  </Step>
+  <Step title="Verify all categories appear">
+    The menu should show Food, Snacks, Drinks, and Desserts
+  </Step>
+  <Step title="Scan a birthday table QR code">
+    Use QR code `TABLE_BDAY_99` to test birthday mode
+  </Step>
+  <Step title="Verify discount and banner">
+    The menu should show:
+    - Animated birthday banner at the top
+    - 15% discount label
+    - Reduced total in cart
+  </Step>
+</Steps>
+
+## Related features
+
+<CardGroup cols={2}>
+  <Card title="Table Mode" icon="qrcode" href="/features/table-mode">
+    QR scanning and table session initialization
+  </Card>
+  <Card title="QR Scanner" icon="camera" href="/features/qr-scanner">
+    Camera-based QR code scanning
+  </Card>
+  <Card title="Payments" icon="credit-card" href="/features/payments">
+    Checkout with discount calculation
+  </Card>
+  <Card title="Delivery Mode" icon="truck" href="/features/delivery-mode">
+    Delivery orders (always full menu)
+  </Card>
+</CardGroup>

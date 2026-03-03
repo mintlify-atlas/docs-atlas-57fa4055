@@ -1,0 +1,313 @@
+---
+title: QR scanner
+description: Camera-based QR code scanning with idempotency guards and multimodal feedback
+---
+
+The QR scanner activates when the user is within the restaurant's geofence radius. It uses the device camera to scan table QR codes and initialize an ordering session.
+
+## Implementation
+
+The scanner is built with `expo-camera` and implements several reliability patterns:
+
+### Camera permissions
+
+The component uses the `useCameraPermissions` hook (src/components/scanner/CameraScanner.tsx:18):
+
+```typescript
+const [permission, requestPermission] = useCameraPermissions();
+```
+
+<Tabs>
+  <Tab title="Permission loading">
+    ```typescript
+    if (!permission) {
+      return (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={Brand.primary} />
+        </View>
+      );
+    }
+    ```
+  </Tab>
+
+  <Tab title="Permission denied">
+    ```typescript
+    if (!permission.granted) {
+      return (
+        <ErrorState
+          icon={<CameraOff size={60} color={Brand.primary} />}
+          title="Camara bloqueada"
+          message="TableOrder necesita acceso a la camara..."
+          primaryAction={
+            permission.canAskAgain
+              ? { label: 'Permitir acceso', onPress: requestPermission }
+              : { label: 'Abrir configuracion', onPress: () => Linking.openSettings() }
+          }
+        />
+      );
+    }
+    ```
+
+    <Info>
+    The UI adapts based on `canAskAgain`: if the user has permanently denied permission, the button opens system settings instead of re-requesting.
+    </Info>
+  </Tab>
+
+  <Tab title="Permission granted">
+    The camera view is rendered with QR code detection enabled:
+
+    ```typescript
+    <CameraView
+      style={StyleSheet.absoluteFillObject}
+      facing="back"
+      barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+      onBarcodeScanned={onBarcodeScanned}
+    />
+    ```
+  </Tab>
+</Tabs>
+
+### Idempotency guard
+
+The scanner prevents double-scan processing using a ref-based lock (src/components/scanner/CameraScanner.tsx:27):
+
+```typescript
+const isProcessing = useRef(false);
+
+const onBarcodeScanned = useCallback(
+  ({ data }: { data: string }) => {
+    // Idempotency check
+    if (isProcessing.current) return;
+    isProcessing.current = true;
+
+    const tableData = TABLES_DATA[data];
+
+    if (tableData) {
+      // Process valid scan
+      setScanState('success');
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      playBeep();
+      setTable(data);
+
+      setTimeout(() => {
+        router.push({ pathname: '/(tabs)/menu', params: { tableId: data } });
+      }, 900);
+    } else {
+      // Handle invalid scan
+      setScanState('error');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      showToast(msg);
+    }
+  },
+  [router, setTable, showToast]
+);
+```
+
+<Warning>
+**Why idempotency matters:** The camera fires `onBarcodeScanned` multiple times per second while a QR code is in frame. Without the guard, the same table would be processed repeatedly, causing navigation loops and duplicate state updates.
+</Warning>
+
+The lock is released after:
+- Successful navigation (automatic after 900ms)
+- Error toast dismissal (src/components/scanner/CameraScanner.tsx:37):
+  ```typescript
+  const onToastHide = useCallback(() => {
+    setToastVisible(false);
+    setScanState('idle');
+    isProcessing.current = false;
+  }, []);
+  ```
+
+## Scan states
+
+The scanner uses a state machine with three states (src/components/scanner/ScanFrame.tsx):
+
+| State | Trigger | Visual Feedback | Duration |
+|-------|---------|-----------------|----------|
+| `idle` | Initial render / reset | White animated frame | Continuous |
+| `success` | Valid QR detected | Green frame + glow | 900ms |
+| `error` | Invalid QR detected | Red frame + shake | Until toast dismissed |
+
+```typescript src/components/scanner/CameraScanner.tsx
+const [scanState, setScanState] = useState<ScanState>('idle');
+```
+
+## Multimodal feedback
+
+The scanner provides three layers of feedback for accessibility and user confidence:
+
+### Visual
+
+- **Scan frame animation:** A branded frame with corner brackets animates continuously in idle state
+- **Color changes:** Frame turns green on success, red on error
+- **Toast messages:** Error messages slide in from the top
+
+### Haptic
+
+```typescript src/components/scanner/CameraScanner.tsx
+// Success
+Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+
+// Error
+Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+```
+
+<Note>
+Haptics only trigger on physical devices. They are silently ignored in simulators.
+</Note>
+
+### Audio
+
+```typescript src/components/scanner/CameraScanner.tsx
+import { playBeep } from '@/src/lib/core/sound/SoundService';
+
+playBeep(); // Plays on successful scan
+```
+
+The `SoundService` uses `expo-av` to play a confirmation beep.
+
+## UI overlay
+
+The scanner uses a darkened mask with a transparent center frame (src/components/scanner/CameraScanner.tsx:123):
+
+```typescript
+<View style={styles.overlay}>
+  <View style={styles.topMask} />
+  <View style={styles.middleRow}>
+    <View style={styles.sideMask} />
+    <ScanFrame state={scanState} size={FRAME_SIZE} />
+    <View style={styles.sideMask} />
+  </View>
+  <View style={styles.bottomMask} />
+</View>
+```
+
+**Frame size:** 260×260 pixels
+
+**Mask opacity:** `rgba(0,0,0,0.58)` — dark enough to focus attention, light enough to see surroundings
+
+## QR code validation
+
+The scanner validates codes against the `TABLES_DATA` registry:
+
+```typescript src/components/scanner/CameraScanner.tsx
+const tableData = TABLES_DATA[data];
+
+if (tableData) {
+  // Valid: proceed to menu
+} else {
+  // Invalid: show error
+  const msg = data.startsWith('TABLE_')
+    ? 'Este codigo no pertenece a ninguna mesa de TableOrder.'
+    : 'Este codigo QR no es valido para TableOrder.';
+  showToast(msg);
+}
+```
+
+Error messages are contextual:
+- If the code starts with `TABLE_` but doesn't exist: "This code doesn't belong to any TableOrder table."
+- If the code is completely unrelated: "This QR code is not valid for TableOrder."
+
+## Test QR codes
+
+Use these codes for testing the scanner:
+
+<CardGroup cols={3}>
+  <Card title="Bar table" icon="martini-glass">
+    **QR:** `TABLE_BAR_01`
+
+    **Table:** Barra 01
+
+    **Menu:** Drinks only
+  </Card>
+
+  <Card title="Dining table" icon="utensils">
+    **QR:** `TABLE_HALL_05`
+
+    **Table:** Salon 05
+
+    **Menu:** Full menu
+  </Card>
+
+  <Card title="Birthday table" icon="cake">
+    **QR:** `TABLE_BDAY_99`
+
+    **Table:** Mesa Especial
+
+    **Menu:** Full menu + 15% discount
+  </Card>
+</CardGroup>
+
+<Info>
+Generate test QR codes at [qr.io](https://qr.io) — paste the code string, download the image, and scan with the app.
+</Info>
+
+## Navigation flow
+
+After a successful scan, the scanner waits 900ms before navigating to allow the user to see the success feedback:
+
+```typescript src/components/scanner/CameraScanner.tsx
+setTimeout(() => {
+  router.push({ pathname: '/(tabs)/menu', params: { tableId: data } });
+}, 900);
+```
+
+The `tableId` is passed as a route parameter and hydrated into `useTableStore` if the store is cold (src/lib/modules/menu/useMenuLogic.ts:15):
+
+```typescript
+const { tableId } = useLocalSearchParams<{ tableId?: string }>();
+
+useEffect(() => {
+  if (tableId && (!currentTable || currentTable.id !== tableId)) {
+    setTable(tableId);
+  }
+}, [tableId]);
+```
+
+This ensures deep links and app reloads work correctly.
+
+## Error handling
+
+### Invalid QR code
+
+Invalid codes trigger:
+1. **Visual:** Frame turns red, error toast slides in
+2. **Haptic:** Warning notification
+3. **Audio:** Silent (no beep)
+4. **State:** Scanner locked until toast dismissed
+
+### Camera errors
+
+If the camera fails to initialize, `expo-camera` throws an error. This should be caught with an error boundary in production.
+
+## Performance considerations
+
+### Scan throttling
+
+The idempotency guard serves as a natural throttle — only one scan can be processed at a time.
+
+### Memory management
+
+The camera view is unmounted when navigating away, releasing hardware resources automatically.
+
+### Frame rate
+
+The camera runs at native frame rate (30-60 FPS) with real-time QR detection. No manual optimization needed.
+
+## Accessibility
+
+- **Haptic feedback:** Helps visually impaired users confirm scan success
+- **Audio beep:** Provides auditory confirmation
+- **High contrast UI:** White frame on dark background with clear visual states
+- **Error messages:** Descriptive text explains what went wrong
+
+## Related features
+
+<CardGroup cols={2}>
+  <Card title="Table Mode" icon="qrcode" href="/features/table-mode">
+    Complete table ordering workflow
+  </Card>
+  <Card title="Contextual Menus" icon="utensils" href="/features/contextual-menus">
+    Menu filtering based on scanned table
+  </Card>
+</CardGroup>

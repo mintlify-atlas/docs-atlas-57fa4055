@@ -1,0 +1,177 @@
+---
+title: PDF service
+description: Generate styled PDF receipts from order data using expo-print
+---
+
+The PDF service renders order receipts as HTML and converts them to PDF files using expo-print. Generated PDFs are saved to the device's temporary file system and can be passed to the Telegram service for dispatch.
+
+## Types
+
+### TicketData
+
+Input data required to generate a receipt PDF.
+
+```typescript
+interface TicketData {
+  items: CartItem[];
+  subtotal: number;
+  discount: number;
+  total: number;
+  shippingCost: number;
+  serviceType: 'TABLE' | 'DELIVERY';
+  tableName?: string;
+  timestamp?: string;
+}
+```
+
+<ParamField path="TicketData" type="object">
+  Complete order information for receipt generation
+  
+  <Expandable title="properties">
+    <ParamField path="items" type="CartItem[]" required>
+      Array of cart items included in the order
+    </ParamField>
+    <ParamField path="subtotal" type="number" required>
+      Order subtotal before discounts and shipping
+    </ParamField>
+    <ParamField path="discount" type="number" required>
+      Discount percentage (0-1 range, e.g., 0.15 for 15% off)
+    </ParamField>
+    <ParamField path="total" type="number" required>
+      Final order total after discount, before shipping
+    </ParamField>
+    <ParamField path="shippingCost" type="number" required>
+      Delivery shipping cost (0 for table orders)
+    </ParamField>
+    <ParamField path="serviceType" type="'TABLE' | 'DELIVERY'" required>
+      Order service type for display formatting
+    </ParamField>
+    <ParamField path="tableName" type="string">
+      Table display name for TABLE orders (e.g., "Mesa 5")
+    </ParamField>
+    <ParamField path="timestamp" type="string">
+      ISO date string for the order. Defaults to current time if not provided
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Functions
+
+### generateTicketPDF
+
+Renders an HTML receipt template and saves it as a PDF file.
+
+```typescript
+generateTicketPDF(data: TicketData): Promise<string>
+```
+
+<ParamField path="data" type="TicketData" required>
+  Order data to render in the receipt
+</ParamField>
+
+<ResponseField name="uri" type="string">
+  Local file URI of the generated PDF (e.g., `file:///path/to/ticket.pdf`)
+</ResponseField>
+
+#### Example
+
+```typescript
+import { generateTicketPDF } from '@/src/lib/services/pdfService';
+
+const ticketData = {
+  items: [
+    {
+      product: { id: '1', name: 'Burger Clásica', price: 12.50, category: 'FOOD', image: '...' },
+      quantity: 2
+    },
+    {
+      product: { id: '2', name: 'Coca-Cola', price: 3.00, category: 'DRINK', image: '...' },
+      quantity: 1
+    }
+  ],
+  subtotal: 28.00,
+  discount: 0.10,
+  total: 25.20,
+  shippingCost: 5.50,
+  serviceType: 'DELIVERY',
+  timestamp: new Date().toISOString()
+};
+
+const pdfUri = await generateTicketPDF(ticketData);
+console.log('PDF generated at:', pdfUri);
+
+// Pass to Telegram service
+await sendTicketToTelegram(pdfUri);
+```
+
+#### Table order example
+
+```typescript
+const tableTicketData = {
+  items: cartItems,
+  subtotal: 45.00,
+  discount: 0.15, // 15% birthday discount
+  total: 38.25,
+  shippingCost: 0,
+  serviceType: 'TABLE',
+  tableName: 'Mesa 7'
+};
+
+const pdfUri = await generateTicketPDF(tableTicketData);
+```
+
+## Receipt template
+
+The generated PDF includes:
+
+- **Header**: TableOrder branding with orange theme (#E25822)
+- **Metadata**: Auto-generated order ID, service type badge, date/time
+- **Order details**: Itemized list with quantities and line totals
+- **Totals section**:
+  - Subtotal
+  - Discount (only shown if > 0%)
+  - Shipping cost (only shown if > 0)
+  - Grand total with emphasized styling
+- **Footer**: Restaurant name from configuration
+
+### Order ID format
+
+Order IDs are generated using the pattern:
+
+```typescript
+const orderId = `TO-${Date.now().toString(36).toUpperCase()}`;
+// Example: TO-L3K4M9P2
+```
+
+### Localization
+
+All text in the receipt is in Spanish (es-ES):
+- Date formatting uses `toLocaleString('es-ES')`
+- Labels and messages are in Spanish
+- Currency formatting uses 2 decimal places
+
+## Styling
+
+The receipt uses a modern, mobile-optimized design:
+
+- **Font**: Apple system fonts with Helvetica fallback
+- **Colors**: Orange primary (#E25822), neutral grays
+- **Layout**: 420px max width, rounded corners, box shadow
+- **Typography**: Clean hierarchy with uppercase labels
+
+<Note>
+  The HTML template is embedded in the service code. Modify the `buildTicketHTML` function (src/lib/services/pdfService.ts:30-230) to customize the receipt design.
+</Note>
+
+## Configuration
+
+The service uses `Config.restaurant.name` for the footer branding. Ensure this is configured before generating receipts.
+
+## Integration
+
+Typical workflow:
+
+1. Collect order data from checkout flow
+2. Generate PDF using `generateTicketPDF`
+3. Send PDF to Telegram using `sendTicketToTelegram`
+4. Clean up temporary files if needed

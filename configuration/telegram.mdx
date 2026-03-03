@@ -1,0 +1,386 @@
+---
+title: Telegram bot setup
+description: Send automated PDF receipts to Telegram for back-office tracking
+---
+
+TableOrder can automatically send PDF receipts to a Telegram chat after every successful payment. This feature is ideal for restaurant operators who want instant order notifications without building a custom dashboard.
+
+## Overview
+
+The Telegram integration uses the **Bot API** to deliver receipts as PDF documents. Each message includes:
+
+- PDF attachment with full order details
+- Caption with restaurant name and timestamp
+- Silent delivery (no sound notification)
+
+This feature is **completely optional**—the app functions normally without Telegram configuration.
+
+<Info>
+  Telegram receipts are sent asynchronously and never block the user experience. If delivery fails, the error is logged silently without affecting checkout.
+</Info>
+
+## Prerequisites
+
+Before setting up the Telegram bot, ensure you have:
+
+1. A Telegram account (mobile number required)
+2. Access to the Telegram app (iOS, Android, or Desktop)
+3. Your personal chat ID or a group/channel ID for receipts
+
+## Bot setup
+
+<Steps>
+  <Step title="Create a bot with BotFather">
+    Open Telegram and search for [@BotFather](https://t.me/BotFather) (official bot creation tool).
+    
+    Send the `/newbot` command and follow the prompts:
+    
+    ```
+    You: /newbot
+    BotFather: Alright, a new bot. How are we going to call it?
+    You: TableOrder Receipt Bot
+    BotFather: Good. Now let's choose a username for your bot.
+    You: tableorder_receipt_bot
+    ```
+    
+    <Note>
+      Bot usernames must end in "bot" and be globally unique. If your first choice is taken, try adding a number or your restaurant name.
+    </Note>
+    
+    BotFather will respond with your bot token:
+    
+    ```
+    Done! Your token is: 7341298765:AAHdqTcvRjf...
+    Keep your token secure and store it safely.
+    ```
+    
+    Copy this token—you'll need it in step 3.
+  </Step>
+  
+  <Step title="Get your chat ID">
+    Telegram requires a numeric **chat ID** to know where to send messages. There are two methods:
+    
+    **Method 1: Personal chat (recommended for testing)**
+    
+    1. Search for [@userinfobot](https://t.me/userinfobot) or [@RawDataBot](https://t.me/RawDataBot) on Telegram
+    2. Send any message to the bot
+    3. It will reply with your user info, including your chat ID
+    
+    Example response:
+    ```
+    Id: 987654321
+    First name: John
+    Username: @john_doe
+    ```
+    
+    Copy the `Id` value—this is your chat ID.
+    
+    **Method 2: Group or channel**
+    
+    1. Create a group/channel for receipt tracking
+    2. Add your bot as a member (search by username)
+    3. Send a test message to the group
+    4. Visit `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
+    5. Look for `"chat":{"id":-123456789}` in the response
+    
+    <Tip>
+      Group chat IDs are negative numbers. Channel IDs start with `-100`.
+    </Tip>
+  </Step>
+  
+  <Step title="Add credentials to .env">
+    Open your `.env` file and add both values:
+    
+    ```bash
+    EXPO_PUBLIC_TELEGRAM_BOT_TOKEN=7341298765:AAHdqTcvRjf...
+    EXPO_PUBLIC_TELEGRAM_CHAT_ID=987654321
+    ```
+    
+    <Warning>
+      Both variables must be set for Telegram features to work. If either is missing, the service will skip sending receipts.
+    </Warning>
+  </Step>
+  
+  <Step title="Test the integration">
+    Restart your app and complete a test order. After successful payment, check your Telegram chat for the PDF receipt.
+    
+    If the receipt doesn't arrive, check the console for error messages:
+    
+    ```
+    [Telegram] Bot credentials not configured. See SETUP2.md.
+    [Telegram] sendDocument failed: 401
+    [Telegram] sendTicketToTelegram error: ...
+    ```
+  </Step>
+</Steps>
+
+## Service implementation
+
+The Telegram integration is handled by `src/lib/services/telegramService.ts`:
+
+```typescript src/lib/services/telegramService.ts
+import { Config } from '@/src/lib/core/config';
+
+const TELEGRAM_API = 'https://api.telegram.org';
+
+/**
+ * Sends a PDF file to the configured Telegram chat.
+ * Silently fails (console.error only) to never interrupt the user experience.
+ */
+export async function sendTicketToTelegram(pdfUri: string): Promise<void> {
+  const { botToken, chatId } = Config.telegram;
+
+  if (!botToken || !chatId) {
+    console.warn('[Telegram] Bot credentials not configured.');
+    return;
+  }
+
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', chatId);
+
+    // React Native requires this specific object shape for file uploads
+    formData.append('document', {
+      uri: pdfUri,
+      name: `ticket_orden_${Date.now()}.pdf`,
+      type: 'application/pdf',
+    } as unknown as Blob);
+
+    formData.append(
+      'caption',
+      `Ticket de pago — ${Config.restaurant.name}\n${new Date().toLocaleString('es-ES')}`
+    );
+
+    const response = await fetch(
+      `${TELEGRAM_API}/bot${botToken}/sendDocument`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'multipart/form-data' },
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.error(`[Telegram] sendDocument failed: ${response.status}`, body);
+    }
+  } catch (err) {
+    // Silent failure — never block the payment success flow
+    console.error('[Telegram] sendTicketToTelegram error:', err);
+  }
+}
+```
+
+### Key features
+
+<CardGroup cols={2}>
+  <Card title="Graceful degradation" icon="circle-check">
+    Missing credentials cause a warning, not a crash. The app continues functioning normally.
+  </Card>
+  <Card title="Silent error handling" icon="volume-xmark">
+    Network failures or API errors are logged but never shown to the user.
+  </Card>
+  <Card title="Multipart upload" icon="file-arrow-up">
+    Uses React Native's FormData with proper MIME type for PDF attachments.
+  </Card>
+  <Card title="Timestamped filenames" icon="clock">
+    Each PDF is named with a Unix timestamp to prevent filename collisions.
+  </Card>
+</CardGroup>
+
+## Bot API reference
+
+TableOrder uses the `sendDocument` method to upload PDF files:
+
+### Request format
+
+```
+POST https://api.telegram.org/bot{TOKEN}/sendDocument
+Content-Type: multipart/form-data
+
+chat_id: 987654321
+document: <binary PDF data>
+caption: Ticket de pago — TableOrder Restaurant\n2026-03-03 14:32:15
+```
+
+### Response format
+
+```json
+{
+  "ok": true,
+  "result": {
+    "message_id": 123,
+    "from": {
+      "id": 7341298765,
+      "is_bot": true,
+      "first_name": "TableOrder Receipt Bot",
+      "username": "tableorder_receipt_bot"
+    },
+    "chat": {
+      "id": 987654321,
+      "first_name": "John",
+      "username": "john_doe",
+      "type": "private"
+    },
+    "date": 1735920735,
+    "document": {
+      "file_name": "ticket_orden_1735920735000.pdf",
+      "mime_type": "application/pdf",
+      "file_id": "BQACAgIAAxkBAAM...",
+      "file_unique_id": "AgADhgQAAr...",
+      "file_size": 12453
+    }
+  }
+}
+```
+
+<Note>
+  The `file_id` can be used to forward the same PDF to other chats without re-uploading.
+</Note>
+
+## Receipt content
+
+PDFs are generated by `expo-print` before being sent to Telegram. Each receipt includes:
+
+- **Header:** Restaurant name and order type (Mesa/Delivery)
+- **Order details:** Table number or delivery address
+- **Items:** Product names, quantities, and prices
+- **Totals:** Subtotal, service fee, shipping cost (if applicable), discount (if applicable), and final total
+- **Footer:** Payment timestamp and order number
+
+Example receipt structure:
+
+```
+╔═══════════════════════════════════╗
+║   TableOrder Restaurant           ║
+║   Orden de Mesa #1234             ║
+║   Mesa: Salon 05                  ║
+╠═══════════════════════════════════╣
+║   2x Burger Clásica      $20.00   ║
+║   1x Coca-Cola           $3.50    ║
+╠═══════════════════════════════════╣
+║   Subtotal:              $23.50   ║
+║   Servicio (10%):        $2.35    ║
+║   TOTAL:                 $25.85   ║
+╠═══════════════════════════════════╣
+║   Pagado: 2026-03-03 14:32        ║
+╚═══════════════════════════════════╝
+```
+
+## Advanced configuration
+
+### Using a private channel
+
+For team-based receipt tracking, create a private Telegram channel:
+
+1. Create a new channel (not a group)
+2. Add your bot as an administrator with **Post Messages** permission
+3. Forward any message from the channel to [@userinfobot](https://t.me/userinfobot)
+4. Copy the forwarded message's chat ID (starts with `-100`)
+
+### Multiple receipt destinations
+
+To send receipts to multiple chats, modify the service to loop through an array of chat IDs:
+
+```typescript
+const CHAT_IDS = ['987654321', '-1001234567890'];
+
+for (const chatId of CHAT_IDS) {
+  formData.set('chat_id', chatId);
+  await fetch(`${TELEGRAM_API}/bot${botToken}/sendDocument`, {
+    method: 'POST',
+    body: formData,
+  });
+}
+```
+
+<Warning>
+  Each `sendDocument` call counts toward your Bot API rate limit (30 messages per second per bot).
+</Warning>
+
+### Custom caption formatting
+
+Edit the caption in `telegramService.ts` to include additional details:
+
+```typescript
+formData.append(
+  'caption',
+  `🧾 Nueva orden recibida\n` +
+  `📍 ${orderType === 'table' ? table.name : 'Delivery'}\n` +
+  `💰 Total: $${total.toFixed(2)}\n` +
+  `🕐 ${new Date().toLocaleString('es-ES')}`
+);
+```
+
+## Troubleshooting
+
+### No receipts arriving in Telegram
+
+**Cause 1:** Missing or invalid bot token
+
+**Solution:** Verify `EXPO_PUBLIC_TELEGRAM_BOT_TOKEN` matches the token from BotFather. Tokens are case-sensitive and should not contain spaces.
+
+**Cause 2:** Incorrect chat ID
+
+**Solution:** Double-check the chat ID using [@userinfobot](https://t.me/userinfobot). Remember that group IDs are negative.
+
+**Cause 3:** Bot not added to group/channel
+
+**Solution:** Ensure the bot is a member (for groups) or administrator (for channels) before sending messages.
+
+### "Chat not found" error
+
+**Cause:** Bot has never interacted with the user
+
+**Solution:** Send any message to your bot directly (e.g., `/start`). This initializes the chat and allows the bot to send messages.
+
+### PDF uploads fail with 400 Bad Request
+
+**Cause:** Invalid file URI or corrupted PDF
+
+**Solution:** Check console logs for the `pdfUri` value. Ensure `expo-print` successfully generated the PDF before calling `sendTicketToTelegram()`.
+
+### Rate limit errors (429 Too Many Requests)
+
+**Cause:** Exceeding Telegram's rate limit (30 messages/second)
+
+**Solution:** Implement exponential backoff or queue messages for batch processing. For typical restaurant volumes, this should never occur.
+
+## Security considerations
+
+<Note>
+  Keep these best practices in mind:
+  
+  - Never share your bot token publicly or commit it to git
+  - Use a dedicated bot for production (separate from test bots)
+  - Restrict group/channel access to authorized personnel only
+  - Monitor bot activity in [@BotFather](https://t.me/BotFather) settings
+  - Revoke and regenerate tokens if compromised
+  - Consider using a private channel instead of personal chat for team access
+</Note>
+
+## API limits and pricing
+
+Telegram Bot API is **completely free** with generous limits:
+
+| Limit Type | Threshold |
+|------------|----------|
+| Messages per second | 30 (per bot) |
+| File size | 50 MB (per file) |
+| Storage | Unlimited (files never expire) |
+| API calls | Unlimited |
+
+<Info>
+  A restaurant processing 500 orders per day will send ~500 PDF messages—well below any practical limit.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Environment setup" icon="gear" href="/configuration/environment">
+    Review all configuration options
+  </Card>
+  <Card title="Mapbox configuration" icon="map" href="/configuration/mapbox">
+    Set up delivery routing
+  </Card>
+</CardGroup>

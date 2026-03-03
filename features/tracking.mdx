@@ -1,0 +1,433 @@
+---
+title: Delivery tracking
+description: Real-time route visualization with Mapbox polylines, ETA, and distance display
+---
+
+The tracking screen displays a live map showing the driving route from the restaurant to the customer's delivery location. It visualizes the Mapbox Directions API route as a polyline with pins for both endpoints.
+
+## When it activates
+
+The tracking screen is shown after a successful delivery payment (src/app/(checkout)/payment.tsx:258):
+
+```typescript
+if (serviceType === 'DELIVERY') {
+  router.replace('/(delivery)/track-order');
+}
+```
+
+<Info>
+Table orders do **not** show tracking. They return to the scanner screen after payment.
+</Info>
+
+## Route visualization
+
+The screen renders a Mapbox map with three key elements:
+
+<Steps>
+  <Step title="Decoded polyline as route">
+    The Mapbox Directions API returns a compressed polyline string. This is decoded into an array of coordinates and rendered as a line (src/app/(delivery)/track-order.tsx:13):
+
+    ```typescript
+    function buildRouteShape(
+      coordinates: Array<{ latitude: number; longitude: number }>
+    ): GeoJSON.Feature<GeoJSON.LineString> {
+      return {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          // GeoJSON uses [longitude, latitude] — opposite of react-native convention
+          coordinates: coordinates.map((c) => [c.longitude, c.latitude]),
+        },
+      };
+    }
+    ```
+
+    The route is rendered with a `ShapeSource` and `LineLayer`:
+
+    ```typescript src/app/(delivery)/track-order.tsx
+    {deliveryInfo && deliveryInfo.decodedRoute.length > 1 && (
+      <ShapeSource id="routeSource" shape={buildRouteShape(deliveryInfo.decodedRoute)}>
+        <LineLayer
+          id="routeLine"
+          style={{
+            lineColor: Brand.primary,
+            lineWidth: 4,
+            lineCap: 'round',
+            lineJoin: 'round',
+            lineOpacity: 0.9,
+          }}
+        />
+      </ShapeSource>
+    )}
+    ```
+
+    <Warning>
+    **Coordinate order matters:** GeoJSON (used by Mapbox) expects `[longitude, latitude]`, while React Native convention is `[latitude, longitude]`. The coordinate mapping in `buildRouteShape` handles this conversion.
+    </Warning>
+  </Step>
+
+  <Step title="Restaurant pin (origin)">
+    Pin A marks the restaurant location with a primary-colored circle:
+
+    ```typescript src/app/(delivery)/track-order.tsx
+    <PointAnnotation
+      id="restaurant"
+      coordinate={[restaurantLocation.longitude, restaurantLocation.latitude]}
+    >
+      <View style={styles.pinA}>
+        <MapPin size={14} color="#fff" strokeWidth={2.5} />
+      </View>
+    </PointAnnotation>
+    ```
+
+    **Pin style:**
+    - 32×32 pixel circle
+    - Primary brand color background
+    - White map pin icon
+    - White 3px border
+    - Drop shadow for depth
+  </Step>
+
+  <Step title="User pin (destination)">
+    Pin B marks the customer's delivery location with a success-colored circle:
+
+    ```typescript src/app/(delivery)/track-order.tsx
+    <PointAnnotation
+      id="user"
+      coordinate={[userLocation.longitude, userLocation.latitude]}
+    >
+      <View style={styles.pinB}>
+        <Navigation size={12} color="#fff" strokeWidth={2.5} />
+      </View>
+    </PointAnnotation>
+    ```
+
+    **Pin style:**
+    - 32×32 pixel circle
+    - Success green background
+    - White navigation icon
+    - White 3px border
+    - Drop shadow for depth
+  </Step>
+</Steps>
+
+## Camera bounds
+
+The map camera is automatically positioned to show both pins with padding (src/app/(delivery)/track-order.tsx:51):
+
+```typescript
+const cameraBounds = {
+  ne: [
+    Math.max(userLocation.longitude, restaurantLocation.longitude) + 0.008,
+    Math.max(userLocation.latitude, restaurantLocation.latitude) + 0.008,
+  ] as [number, number],
+  sw: [
+    Math.min(userLocation.longitude, restaurantLocation.longitude) - 0.008,
+    Math.min(userLocation.latitude, restaurantLocation.latitude) - 0.008,
+  ] as [number, number],
+  paddingTop: 60,
+  paddingBottom: 220, // leave room for the info panel
+  paddingLeft: 40,
+  paddingRight: 40,
+};
+```
+
+<Info>
+The bottom padding (220px) ensures the info panel doesn't obscure the route.
+</Info>
+
+## Delivery info panel
+
+The bottom panel displays three key metrics (src/app/(delivery)/track-order.tsx:128):
+
+<Tabs>
+  <Tab title="ETA (estimated time)">
+    ```typescript
+    <View style={styles.panelItem}>
+      <Clock size={20} color={Brand.primary} />
+      <View>
+        <Text style={styles.panelLabel}>Tiempo estimado</Text>
+        <Text style={styles.panelValue}>{deliveryInfo.etaMinutes} min</Text>
+      </View>
+    </View>
+    ```
+
+    Calculated from Mapbox Directions API `duration` field (src/lib/services/mapboxService.ts:68):
+    ```typescript
+    const etaMinutes = Math.ceil(route.duration / 60);
+    ```
+  </Tab>
+
+  <Tab title="Distance">
+    ```typescript
+    <View style={styles.panelItem}>
+      <Navigation size={20} color={Brand.primary} />
+      <View>
+        <Text style={styles.panelLabel}>Distancia</Text>
+        <Text style={styles.panelValue}>{deliveryInfo.distanceKm.toFixed(1)} km</Text>
+      </View>
+    </View>
+    ```
+
+    Converted from meters to kilometers (src/lib/services/mapboxService.ts:65):
+    ```typescript
+    const distanceKm = parseFloat((route.distance / 1000).toFixed(2));
+    ```
+  </Tab>
+
+  <Tab title="Shipping cost">
+    ```typescript
+    <View style={styles.panelItem}>
+      <MapPin size={20} color={Brand.primary} />
+      <View>
+        <Text style={styles.panelLabel}>Costo envío</Text>
+        <Text style={styles.panelValue}>${shippingCost.toFixed(2)}</Text>
+      </View>
+    </View>
+    ```
+
+    Retrieved from cart store:
+    ```typescript
+    const { shippingCost } = useCartStore();
+    ```
+  </Tab>
+</Tabs>
+
+The panel layout uses dividers to separate metrics:
+
+```typescript src/app/(delivery)/track-order.tsx
+<View style={styles.panelRow}>
+  <View style={styles.panelItem}>{/* ETA */}</View>
+  <View style={styles.panelDivider} />
+  <View style={styles.panelItem}>{/* Distance */}</View>
+  <View style={styles.panelDivider} />
+  <View style={styles.panelItem}>{/* Shipping cost */}</View>
+</View>
+```
+
+## State management
+
+The tracking screen depends on three pieces of state from `useLocationStore` (src/app/(delivery)/track-order.tsx:29):
+
+```typescript
+const { userLocation, restaurantLocation, deliveryInfo, resetLocation } = useLocationStore();
+```
+
+### DeliveryInfo structure
+
+```typescript src/lib/core/types.ts
+interface DeliveryInfo {
+  distanceKm: number;        // 3.47
+  etaMinutes: number;        // 12
+  polyline: string;          // Encoded Mapbox polyline (not used in tracking)
+  decodedRoute: Coordinates[]; // Array of {latitude, longitude} points for rendering
+}
+```
+
+This data is set when the delivery catalog calculates the route (before checkout).
+
+## Loading state
+
+If location or delivery info is missing, a loading indicator displays (src/app/(delivery)/track-order.tsx:39):
+
+```typescript
+if (!userLocation || !restaurantLocation) {
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color={Brand.primary} />
+        <Text style={styles.loadingText}>Cargando mapa de ruta...</Text>
+      </View>
+    </SafeAreaView>
+  );
+}
+```
+
+This handles edge cases like:
+- Direct navigation to tracking screen without going through delivery flow
+- Store hydration delays
+- Network issues during route calculation
+
+## Header
+
+The header displays order status and restaurant name (src/app/(delivery)/track-order.tsx:69):
+
+```typescript
+<View style={styles.header}>
+  <PackageCheck size={24} color={Brand.success} strokeWidth={1.8} />
+  <View style={styles.headerText}>
+    <Text style={styles.headerTitle}>Pedido en camino</Text>
+    <Text style={styles.headerSub}>{Config.restaurant.name}</Text>
+  </View>
+</View>
+```
+
+The green checkmark icon provides visual confirmation that payment succeeded.
+
+## Done button
+
+The "Finalizar" button resets all state and returns to the home screen (src/app/(delivery)/track-order.tsx:32):
+
+```typescript
+const handleDone = () => {
+  resetCart();
+  resetLocation();
+  router.replace('/(tabs)');
+};
+```
+
+This clears:
+- Cart items and totals
+- Delivery route and ETA
+- Restaurant and user locations
+- App mode (resets to `CHECKING`)
+
+The user can now start a new order (either table or delivery).
+
+## Map styling
+
+The map container has rounded corners and margin for visual polish (src/app/(delivery)/track-order.tsx:194):
+
+```typescript
+mapContainer: {
+  flex: 1,
+  marginHorizontal: 16,
+  marginVertical: 12,
+  borderRadius: 20,
+  overflow: 'hidden',
+}
+```
+
+Mapbox branding is disabled for a cleaner look:
+
+```typescript
+<MapView
+  logoEnabled={false}
+  attributionEnabled={false}
+  scaleBarEnabled={false}
+>
+```
+
+<Warning>
+**Mapbox Terms of Service:** If deploying to production, ensure you comply with Mapbox attribution requirements. The disabled attribution is acceptable for demos and portfolio projects.
+</Warning>
+
+## Route line styling
+
+The polyline uses rounded caps and joins for smooth rendering (src/app/(delivery)/track-order.tsx:92):
+
+```typescript
+<LineLayer
+  id="routeLine"
+  style={{
+    lineColor: Brand.primary,    // Primary brand color
+    lineWidth: 4,                 // 4px line
+    lineCap: 'round',             // Rounded line ends
+    lineJoin: 'round',            // Rounded corners
+    lineOpacity: 0.9,             // Slightly transparent
+  }}
+/>
+```
+
+This creates a visually distinct route that stands out against the map tiles.
+
+## Performance considerations
+
+### Polyline decoding
+
+The polyline is decoded once during route calculation (in `mapboxService`) and stored in the `deliveryInfo` object. The tracking screen reads the pre-decoded coordinates, avoiding duplicate decoding work.
+
+### GeoJSON rendering
+
+Mapbox GL Native renders GeoJSON features efficiently using GPU acceleration. Large routes (100+ points) render smoothly without performance degradation.
+
+### Map tile caching
+
+Mapbox SDK caches map tiles locally. Revisiting the same area (e.g., testing multiple deliveries) loads almost instantly.
+
+## Real-time tracking (future enhancement)
+
+The current implementation shows a **static route**. To add real-time driver tracking:
+
+<Steps>
+  <Step title="Backend location updates">
+    Stream driver GPS coordinates via WebSocket or polling:
+
+    ```typescript
+    const driverLocation = await fetch('/api/driver/location');
+    ```
+  </Step>
+
+  <Step title="Animated pin">
+    Add a third pin for the driver that moves along the route:
+
+    ```typescript
+    <PointAnnotation
+      id="driver"
+      coordinate={[driverLocation.longitude, driverLocation.latitude]}
+    >
+      <View style={styles.driverPin}>
+        <Car size={16} color="#fff" />
+      </View>
+    </PointAnnotation>
+    ```
+  </Step>
+
+  <Step title="Route progress">
+    Highlight the completed portion of the route in a different color using two `LineLayer` components.
+  </Step>
+
+  <Step title="ETA updates">
+    Recalculate ETA based on current driver position and remaining distance.
+  </Step>
+</Steps>
+
+## Error handling
+
+### Missing delivery info
+
+If `deliveryInfo` is null, the polyline doesn't render but the map still displays with pins:
+
+```typescript
+{deliveryInfo && deliveryInfo.decodedRoute.length > 1 && (
+  <ShapeSource ...>
+)}
+```
+
+The info panel shows a loading state:
+
+```typescript
+{deliveryInfo ? (
+  <View style={styles.panelRow}>{/* Metrics */}</View>
+) : (
+  <View style={styles.panelItem}>
+    <ActivityIndicator size="small" color={Brand.primary} />
+    <Text style={styles.panelLabel}>Calculando ruta...</Text>
+  </View>
+)}
+```
+
+### Invalid coordinates
+
+If coordinates are invalid (e.g., `{latitude: 0, longitude: 0}`), the map will center on the Atlantic Ocean. Always validate coordinates before storing:
+
+```typescript
+if (latitude === 0 && longitude === 0) {
+  throw new Error('Invalid GPS coordinates');
+}
+```
+
+## Related features
+
+<CardGroup cols={2}>
+  <Card title="Delivery Mode" icon="truck" href="/features/delivery-mode">
+    Complete delivery ordering workflow
+  </Card>
+  <Card title="Payments" icon="credit-card" href="/features/payments">
+    Checkout flow that redirects to tracking
+  </Card>
+  <Card title="Table Mode" icon="qrcode" href="/features/table-mode">
+    Alternative mode (no tracking)
+  </Card>
+</CardGroup>

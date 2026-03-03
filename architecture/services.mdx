@@ -1,0 +1,530 @@
+---
+title: Services
+description: External API integrations and service layer patterns
+---
+
+TableOrder integrates with multiple external services to provide maps, payments, PDF generation, and notifications. All external API calls are isolated in the `lib/services/` layer.
+
+## Service architecture
+
+Services are organized by domain:
+
+```typescript
+lib/services/
+├── mapboxService.ts     # Directions API + polyline decoding
+├── pdfService.ts        # HTML-to-PDF ticket generation
+└── telegramService.ts   # Bot API document upload
+```
+
+<Info>
+  Each service is a standalone module that can be tested, mocked, or replaced independently.
+</Info>
+
+## Mapbox service
+
+Handles route calculation, polyline decoding, and shipping cost estimation.
+
+**File:** `src/lib/services/mapboxService.ts`
+
+### Route calculation
+
+Fetches a driving route between two coordinates using the Mapbox Directions API:
+
+```typescript
+import polyline from '@mapbox/polyline';
+import { Config } from '@/src/lib/core/config';
+import { Coordinates, DeliveryInfo } from '@/src/lib/core/types';
+
+const MAPBOX_BASE = 'https://api.mapbox.com/directions/v5/mapbox/driving';
+
+export async function getDeliveryRoute(
+  origin: Coordinates,
+  destination: Coordinates
+): Promise<DeliveryInfo> {
+  const { token } = Config.mapbox;
+
+  if (!token) {
+    throw new Error('EXPO_PUBLIC_MAPBOX_TOKEN is not configured.');
+  }
+
+  // Mapbox expects coordinates in lon,lat order
+  const coords = `${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}`;
+  const url = `${MAPBOX_BASE}/${coords}?geometries=polyline&overview=full&access_token=${token}`;
+
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Mapbox API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (data.code !== 'Ok' || data.routes.length === 0) {
+    throw new Error('No route found between the two points.');
+  }
+
+  const route = data.routes[0];
+
+  return {
+    distanceKm: parseFloat((route.distance / 1000).toFixed(2)),
+    etaMinutes: Math.ceil(route.duration / 60),
+    polyline: route.geometry,
+    decodedRoute: polyline.decode(route.geometry).map(([lat, lng]) => ({
+      latitude: lat,
+      longitude: lng,
+    })),
+  };
+}
+```
+
+<Tabs>
+  <Tab title="Request">
+    ```http
+    GET /directions/v5/mapbox/driving/-74.0060,40.7128;-73.9851,40.7589
+      ?geometries=polyline
+      &overview=full
+      &access_token=pk.ey...
+    ```
+    
+    **Parameters:**
+    - `geometries=polyline` — Return compressed polyline instead of GeoJSON
+    - `overview=full` — Include all route points, not simplified
+  </Tab>
+  
+  <Tab title="Response">
+    ```json
+    {
+      "routes": [{
+        "distance": 7420.3,
+        "duration": 1080,
+        "geometry": "..encoded polyline..."
+      }],
+      "code": "Ok"
+    }
+    ```
+    
+    **Processing:**
+    - Distance: `7420.3 m` → `7.42 km`
+    - Duration: `1080 s` → `18 minutes` (rounded up)
+    - Geometry: Decoded to array of coordinates
+  </Tab>
+  
+  <Tab title="Result">
+    ```typescript
+    {
+      distanceKm: 7.42,
+      etaMinutes: 18,
+      polyline: "...",
+      decodedRoute: [
+        { latitude: 40.7128, longitude: -74.0060 },
+        { latitude: 40.7135, longitude: -74.0055 },
+        // ... hundreds more points
+        { latitude: 40.7589, longitude: -73.9851 }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Polyline decoding
+
+Mapbox returns routes as compressed polylines (precision 5). The service decodes them into coordinate arrays:
+
+```typescript
+import polyline from '@mapbox/polyline';
+
+// Encoded: "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
+// Decoded: [[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]]
+
+const decodedPairs: [number, number][] = polyline.decode(route.geometry);
+
+// Convert to react-native-maps format
+const decodedRoute: Coordinates[] = decodedPairs.map(([lat, lng]) => ({
+  latitude: lat,
+  longitude: lng,
+}));
+```
+
+<Note>
+  Polyline encoding reduces payload size by ~90%. A 500-point route that would be 20KB as JSON is only 2KB as an encoded polyline.
+</Note>
+
+### Shipping cost calculation
+
+Calculates delivery cost based on distance and a per-kilometer rate:
+
+```typescript
+export function calculateShippingCost(distanceKm: number): number {
+  return parseFloat((distanceKm * Config.restaurant.costPerKm).toFixed(2));
+}
+
+// Example: 7.42 km × $1.50/km = $11.13
+```
+
+**Usage in checkout flow:**
+
+```typescript
+const deliveryInfo = await getDeliveryRoute(restaurant, userLocation);
+const shippingCost = calculateShippingCost(deliveryInfo.distanceKm);
+
+useCartStore.getState().setShippingCost(shippingCost);
+useLocationStore.getState().setDeliveryRoute(deliveryInfo);
+```
+
+## PDF service
+
+Generates branded PDF receipts using `expo-print` with HTML templates.
+
+**File:** `src/lib/services/pdfService.ts`
+
+### Template structure
+
+The service builds an HTML template with embedded CSS and dynamic content:
+
+```typescript
+import * as Print from 'expo-print';
+import { CartItem } from '@/src/lib/core/types';
+
+export interface TicketData {
+  items: CartItem[];
+  subtotal: number;
+  discount: number;
+  total: number;
+  shippingCost: number;
+  serviceType: 'TABLE' | 'DELIVERY';
+  tableName?: string;
+  timestamp?: string;
+}
+
+export async function generateTicketPDF(data: TicketData): Promise<string> {
+  const html = buildTicketHTML(data);
+  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  return uri;
+}
+```
+
+### HTML template
+
+The template includes:
+
+<CardGroup cols={2}>
+  <Card title="Header" icon="heading">
+    TableOrder logo with branded colors (#E25822)
+  </Card>
+  <Card title="Metadata" icon="info">
+    Order ID, service type, date/time
+  </Card>
+  <Card title="Items table" icon="list">
+    Product name, quantity, and prices
+  </Card>
+  <Card title="Totals section" icon="calculator">
+    Subtotal, discount, shipping, and grand total
+  </Card>
+</CardGroup>
+
+**Key template features:**
+
+```typescript
+function buildTicketHTML(data: TicketData): string {
+  const orderId = `TO-${Date.now().toString(36).toUpperCase()}`;
+  const dateStr = new Date().toLocaleString('es-ES');
+  
+  const serviceLabel = data.serviceType === 'TABLE'
+    ? `Mesa: ${data.tableName ?? 'Sin nombre'}`
+    : `Delivery`;
+  
+  const discountAmount = data.subtotal - (data.total - data.shippingCost);
+  const showDiscount = data.discount > 0 && discountAmount > 0;
+  
+  const itemsRows = data.items
+    .map((item) => `
+      <tr>
+        <td class="item-name">${item.quantity}x ${item.product.name}</td>
+        <td class="item-price">$${(item.product.price * item.quantity).toFixed(2)}</td>
+      </tr>`)
+    .join('');
+  
+  return `<!DOCTYPE html>...`;
+}
+```
+
+<Tabs>
+  <Tab title="Header section">
+    ```html
+    <div class="header">
+      <div class="logo">TableOrder</div>
+      <div class="logo-sub">Comprobante de pago</div>
+    </div>
+    ```
+    
+    Styled with the brand color (#E25822) and bold typography.
+  </Tab>
+  
+  <Tab title="Items section">
+    ```html
+    <table class="items-table">
+      <tbody>
+        <tr>
+          <td class="item-name">2x Hamburguesa Clásica</td>
+          <td class="item-price">$25.98</td>
+        </tr>
+        <tr>
+          <td class="item-name">1x Coca Cola</td>
+          <td class="item-price">$2.50</td>
+        </tr>
+      </tbody>
+    </table>
+    ```
+  </Tab>
+  
+  <Tab title="Totals section">
+    ```html
+    <div class="totals">
+      <div class="total-row">
+        <span>Subtotal</span>
+        <span>$28.48</span>
+      </div>
+      <div class="total-row discount">
+        <span>Descuento (15% OFF)</span>
+        <span>-$4.27</span>
+      </div>
+      <div class="total-row grand">
+        <span>Total pagado</span>
+        <span class="grand-amount">$24.21</span>
+      </div>
+    </div>
+    ```
+  </Tab>
+</Tabs>
+
+### Generated PDF example
+
+The service returns a file URI that can be shared or uploaded:
+
+```typescript
+const pdfUri = await generateTicketPDF({
+  items: cartItems,
+  subtotal: 28.48,
+  discount: 0.15,
+  total: 24.21,
+  shippingCost: 0,
+  serviceType: 'TABLE',
+  tableName: 'Salon 05',
+  timestamp: new Date().toISOString(),
+});
+
+// Returns: "file:///var/mobile/.../ticket_1234567890.pdf"
+```
+
+## Telegram service
+
+Sends PDF receipts to a Telegram chat using the Bot API.
+
+**File:** `src/lib/services/telegramService.ts`
+
+### Document upload
+
+Uses `multipart/form-data` to upload PDF files:
+
+```typescript
+import { Config } from '@/src/lib/core/config';
+
+const TELEGRAM_API = 'https://api.telegram.org';
+
+export async function sendTicketToTelegram(pdfUri: string): Promise<void> {
+  const { botToken, chatId } = Config.telegram;
+
+  if (!botToken || !chatId) {
+    console.warn('[Telegram] Bot credentials not configured.');
+    return;
+  }
+
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', chatId);
+
+    // React Native requires this specific object shape for file uploads
+    formData.append('document', {
+      uri: pdfUri,
+      name: `ticket_orden_${Date.now()}.pdf`,
+      type: 'application/pdf',
+    } as unknown as Blob);
+
+    formData.append(
+      'caption',
+      `Ticket de pago — ${Config.restaurant.name}\n${new Date().toLocaleString('es-ES')}`
+    );
+
+    const response = await fetch(
+      `${TELEGRAM_API}/bot${botToken}/sendDocument`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'multipart/form-data' },
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.error(`[Telegram] sendDocument failed: ${response.status}`, body);
+    }
+  } catch (err) {
+    // Silent failure — never block the payment success flow
+    console.error('[Telegram] sendTicketToTelegram error:', err);
+  }
+}
+```
+
+<Info>
+  Telegram delivery is **non-blocking**. If the upload fails, it's logged to console but doesn't affect the user's payment success flow.
+</Info>
+
+### FormData structure
+
+```typescript
+{
+  chat_id: "-1001234567890",
+  document: {
+    uri: "file:///path/to/ticket.pdf",
+    name: "ticket_orden_1234567890.pdf",
+    type: "application/pdf"
+  },
+  caption: "Ticket de pago — Restaurant Name\n3/3/2026, 14:35:21"
+}
+```
+
+**API endpoint:**
+
+```http
+POST https://api.telegram.org/bot{TOKEN}/sendDocument
+Content-Type: multipart/form-data
+```
+
+### Integration flow
+
+After successful payment, the app orchestrates PDF generation and Telegram upload:
+
+```typescript
+// 1. Generate PDF
+const pdfUri = await generateTicketPDF(ticketData);
+
+// 2. Send to Telegram (non-blocking)
+await sendTicketToTelegram(pdfUri);
+
+// 3. Show local notification
+await NotificationService.showPaymentSuccess(total);
+
+// 4. Navigate to success screen
+router.push('/success');
+```
+
+## Error handling patterns
+
+All services implement consistent error handling:
+
+<Tabs>
+  <Tab title="Mapbox">
+    ```typescript
+    if (!token) {
+      throw new Error('EXPO_PUBLIC_MAPBOX_TOKEN is not configured.');
+    }
+    
+    if (!response.ok) {
+      throw new Error(`Mapbox API error: ${response.status}`);
+    }
+    
+    if (data.code !== 'Ok' || data.routes.length === 0) {
+      throw new Error('No route found between the two points.');
+    }
+    ```
+    
+    **Strategy:** Throw errors immediately. Caller handles with try/catch.
+  </Tab>
+  
+  <Tab title="PDF">
+    ```typescript
+    export async function generateTicketPDF(data: TicketData): Promise<string> {
+      const html = buildTicketHTML(data);
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      return uri;
+    }
+    ```
+    
+    **Strategy:** Let `expo-print` errors propagate. Caller handles failure.
+  </Tab>
+  
+  <Tab title="Telegram">
+    ```typescript
+    try {
+      // ... upload logic
+    } catch (err) {
+      // Silent failure — never block the payment success flow
+      console.error('[Telegram] sendTicketToTelegram error:', err);
+    }
+    ```
+    
+    **Strategy:** Catch and log errors silently. Never interrupt user flow.
+  </Tab>
+</Tabs>
+
+## Service testing
+
+Services are pure functions that can be tested in isolation:
+
+```typescript
+import { calculateShippingCost } from '@/src/lib/services/mapboxService';
+import { generateTicketPDF } from '@/src/lib/services/pdfService';
+
+describe('mapboxService', () => {
+  it('calculates shipping cost correctly', () => {
+    // Config.restaurant.costPerKm = 1.50
+    expect(calculateShippingCost(7.42)).toBe(11.13);
+    expect(calculateShippingCost(0)).toBe(0);
+  });
+});
+
+describe('pdfService', () => {
+  it('generates PDF with correct order ID format', async () => {
+    const uri = await generateTicketPDF(mockTicketData);
+    expect(uri).toMatch(/^file:\/\//);
+  });
+});
+```
+
+<Note>
+  Mock external APIs in tests using `jest.mock()` or MSW (Mock Service Worker).
+</Note>
+
+## Configuration
+
+All services read credentials from `lib/core/config.ts`, which loads from environment variables:
+
+```typescript
+export const Config = {
+  mapbox: {
+    token: process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? '',
+  },
+  telegram: {
+    botToken: process.env.EXPO_PUBLIC_TELEGRAM_BOT_TOKEN ?? '',
+    chatId: process.env.EXPO_PUBLIC_TELEGRAM_CHAT_ID ?? '',
+  },
+  restaurant: {
+    name: 'TableOrder Restaurant',
+    costPerKm: 1.50,
+    coordinates: { latitude: 40.7128, longitude: -74.0060 },
+  },
+};
+```
+
+See the [Environment setup guide](/getting-started/setup) for configuration details.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture overview" icon="sitemap" href="/architecture/overview">
+    Understand the overall system design
+  </Card>
+  <Card title="State management" icon="database" href="/architecture/state-management">
+    Learn how Zustand stores work
+  </Card>
+</CardGroup>

@@ -1,0 +1,514 @@
+---
+title: Payments
+description: Complete checkout flow with mock payment processing, PDF receipts, and Telegram dispatch
+---
+
+The payment system orchestrates a multi-step checkout flow: form validation, payment processing, PDF generation, Telegram notification, and push notifications. It supports both table and delivery orders with different post-payment flows.
+
+## Payment flow
+
+<Steps>
+  <Step title="Order summary display">
+    The checkout screen displays:
+    - Cart items with quantities and prices
+    - Subtotal calculation
+    - Birthday discount (if applicable)
+    - Shipping cost (delivery only)
+    - Grand total
+
+    ```typescript src/app/(checkout)/payment.tsx
+    const subtotal = items.reduce((s, i) => s + i.product.price * i.quantity, 0);
+    const grandTotal = total + shippingCost;
+    ```
+  </Step>
+
+  <Step title="Virtual card preview">
+    A live card preview shows as the user types:
+    - Card number (masked as `•••• •••• •••• 1234`)
+    - Cardholder name
+    - Expiry date (MM/YY format)
+
+    The preview uses a gradient background with the TableOrder branding.
+  </Step>
+
+  <Step title="Form validation">
+    The pay button is disabled until all fields are valid:
+
+    ```typescript src/app/(checkout)/payment.tsx
+    const isFormValid =
+      cardNumber.replace(/\s/g, '').length === 16 &&
+      holder.trim().length > 2 &&
+      expiry.length === 5 &&
+      cvv.length >= 3;
+    ```
+  </Step>
+
+  <Step title="Payment processing">
+    When the user taps "Pay", a mock payment service is called:
+
+    ```typescript src/lib/core/payments/paymentService.ts
+    export async function processMockPayment(_amount: number): Promise<PaymentResult> {
+      await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+
+      const willSucceed = Math.random() > 0.15;
+
+      if (willSucceed) {
+        return { success: true };
+      }
+
+      return {
+        success: false,
+        error: 'Lo sentimos, el banco rechazo la transaccion. Intenta con otro metodo.',
+      };
+    }
+    ```
+
+    <Info>
+    **Success rate:** 85% (15% failure rate for testing error flows)
+
+    **Latency:** 2000ms (simulates real network round-trip)
+    </Info>
+  </Step>
+
+  <Step title="PDF receipt generation">
+    On success, a branded PDF ticket is generated using `expo-print`:
+
+    ```typescript src/app/(checkout)/payment.tsx
+    let pdfUri = '';
+    try {
+      pdfUri = await generateTicketPDF({
+        items,
+        subtotal,
+        discount,
+        total,
+        shippingCost,
+        serviceType,
+        tableName: currentTable?.displayName,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error('[PDF] Generation failed:', err);
+    }
+    ```
+
+    The PDF includes:
+    - Restaurant branding
+    - Order details with item breakdown
+    - Subtotal, discount, shipping (if delivery)
+    - Total amount paid
+    - Timestamp
+  </Step>
+
+  <Step title="Telegram dispatch">
+    The PDF is sent to a Telegram channel via Bot API:
+
+    ```typescript src/app/(checkout)/payment.tsx
+    if (pdfUri) {
+      await sendTicketToTelegram(pdfUri);
+    }
+    ```
+
+    This allows back-office staff to track orders in real-time.
+
+    <Note>
+    Telegram dispatch fails silently if credentials are not configured. The app continues normally.
+    </Note>
+  </Step>
+
+  <Step title="Push notification">
+    A local push notification is sent immediately:
+
+    ```typescript src/app/(checkout)/payment.tsx
+    const serviceName =
+      serviceType === 'TABLE'
+        ? (currentTable?.displayName ?? 'tu mesa')
+        : 'delivery';
+    await sendPaymentNotification(grandTotal, serviceName);
+    ```
+  </Step>
+
+  <Step title="Success modal and navigation">
+    A success modal displays with contextual messaging:
+    - **Table orders:** "Pago exitoso. Gracias por tu visita." → Navigate to scanner
+    - **Delivery orders:** "Tu pedido está en camino." → Navigate to tracking
+  </Step>
+</Steps>
+
+## Virtual card component
+
+The card preview updates in real-time as the user types (src/app/(checkout)/payment.tsx:55):
+
+```typescript
+function CardPreview({ number, holder, expiry }: CardPreviewProps) {
+  return (
+    <LinearGradient
+      colors={['#1A1040', '#2D1B69', '#0F0F2E']}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.card}
+    >
+      <View style={styles.cardTopRow}>
+        <Cpu size={28} color="rgba(255,255,255,0.6)" />
+        <Text style={styles.cardBrand}>TABLEORDER</Text>
+      </View>
+      <Text style={styles.cardNumber}>{maskCardDisplay(number)}</Text>
+      <View style={styles.cardBottomRow}>
+        <View>
+          <Text style={styles.cardLabel}>TITULAR</Text>
+          <Text style={styles.cardValue}>{holder.toUpperCase() || 'TU NOMBRE'}</Text>
+        </View>
+        <View>
+          <Text style={styles.cardLabel}>VENCE</Text>
+          <Text style={styles.cardValue}>{expiry || 'MM/AA'}</Text>
+        </View>
+      </View>
+    </LinearGradient>
+  );
+}
+```
+
+### Card number masking
+
+```typescript src/app/(checkout)/payment.tsx
+function maskCardDisplay(number: string): string {
+  const digits = number.replace(/\s/g, '');
+  const visible = digits.slice(-4).padStart(4, '');
+  if (digits.length < 4) return number || '•••• •••• •••• ••••';
+  return `•••• •••• •••• ${visible}`;
+}
+```
+
+Only the last 4 digits are shown, matching real credit card UX patterns.
+
+## Input formatting
+
+Form inputs are formatted automatically as the user types:
+
+<Tabs>
+  <Tab title="Card number">
+    ```typescript src/app/(checkout)/payment.tsx
+    function formatCardNumber(raw: string): string {
+      const digits = raw.replace(/\D/g, '').slice(0, 16);
+      return digits.replace(/(.{4})/g, '$1 ').trim();
+    }
+    ```
+
+    **Input:** `1234567890123456`
+
+    **Formatted:** `1234 5678 9012 3456`
+  </Tab>
+
+  <Tab title="Expiry date">
+    ```typescript src/app/(checkout)/payment.tsx
+    function formatExpiry(raw: string): string {
+      const digits = raw.replace(/\D/g, '').slice(0, 4);
+      if (digits.length >= 3) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+      return digits;
+    }
+    ```
+
+    **Input:** `1226`
+
+    **Formatted:** `12/26`
+  </Tab>
+
+  <Tab title="CVV">
+    ```typescript src/app/(checkout)/payment.tsx
+    onChangeText={(t) => setCvv(t.replace(/\D/g, '').slice(0, 4))}
+    ```
+
+    Strips non-digits, max 4 characters (supports Amex)
+  </Tab>
+</Tabs>
+
+## Order summary
+
+The order summary adapts based on service type and discounts (src/app/(checkout)/payment.tsx:88):
+
+```typescript
+function OrderSummary() {
+  const items = useCartStore((s) => s.items);
+  const total = useCartStore((s) => s.total);
+  const isBirthdayMode = useCartStore((s) => s.isBirthdayMode);
+  const discount = useCartStore((s) => s.discount);
+  const shippingCost = useCartStore((s) => s.shippingCost);
+  const serviceType = useCartStore((s) => s.serviceType);
+
+  const subtotal = items.reduce((s, i) => s + i.product.price * i.quantity, 0);
+  const grandTotal = total + shippingCost;
+
+  return (
+    <View style={styles.summary}>
+      {/* Item list */}
+      {items.map((item) => (
+        <View key={item.product.id} style={styles.summaryRow}>
+          <Text style={styles.summaryItem}>
+            {item.quantity}x {item.product.name}
+          </Text>
+          <Text style={styles.summaryItemPrice}>
+            ${(item.product.price * item.quantity).toFixed(2)}
+          </Text>
+        </View>
+      ))}
+
+      {/* Birthday discount */}
+      {isBirthdayMode && (
+        <View style={styles.summaryRow}>
+          <Text style={styles.discountLabel}>
+            Descuento ({Math.round(discount * 100)}% OFF)
+          </Text>
+          <Text style={styles.discountValue}>-${(subtotal - total).toFixed(2)}</Text>
+        </View>
+      )}
+
+      {/* Shipping cost */}
+      {serviceType === 'DELIVERY' && shippingCost > 0 && (
+        <View style={styles.summaryRow}>
+          <Text style={styles.summaryItem}>Costo de envío</Text>
+          <Text style={styles.summaryItemPrice}>${shippingCost.toFixed(2)}</Text>
+        </View>
+      )}
+
+      <View style={styles.divider} />
+      <View style={styles.summaryRow}>
+        <Text style={styles.totalLabel}>Total</Text>
+        <Text style={styles.totalValue}>${grandTotal.toFixed(2)}</Text>
+      </View>
+    </View>
+  );
+}
+```
+
+<Info>
+The summary automatically shows/hides the discount and shipping rows based on the order type.
+</Info>
+
+## Loading states
+
+The payment flow has three loading steps with different messages (src/app/(checkout)/payment.tsx:140):
+
+```typescript
+const LOADING_LABELS: Record<string, string> = {
+  payment: 'Validando con el banco...',
+  ticket: 'Generando ticket PDF...',
+  telegram: 'Enviando comprobante...',
+};
+```
+
+The pay button shows the current step:
+
+```typescript
+<TouchableOpacity style={styles.payBtn} onPress={handlePay}>
+  {paymentState === 'loading' ? (
+    <>
+      <ActivityIndicator size="small" color="#fff" />
+      <Text style={styles.payBtnText}>
+        {LOADING_LABELS[loadingStep] ?? 'Procesando...'}
+      </Text>
+    </>
+  ) : (
+    <Text style={styles.payBtnText}>Pagar ${grandTotal.toFixed(2)}</Text>
+  )}
+</TouchableOpacity>
+```
+
+## Error handling
+
+Payment failures display a modal with the error message (src/app/(checkout)/payment.tsx:386):
+
+```typescript
+<Modal visible={paymentState === 'error'} transparent animationType="fade">
+  <View style={styles.modalOverlay}>
+    <View style={[styles.modalCard, styles.modalCardError]}>
+      <XCircle size={56} color={Brand.error} />
+      <Text style={styles.modalTitle}>Pago rechazado</Text>
+      <Text style={styles.modalBody}>{errorMsg}</Text>
+      <TouchableOpacity
+        style={[styles.modalBtn, styles.modalBtnError]}
+        onPress={() => setPaymentState('idle')}
+      >
+        <Text style={styles.modalBtnText}>Intentar de nuevo</Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+</Modal>
+```
+
+The modal includes:
+- Red error icon
+- "Pago rechazado" title
+- Error message from payment service
+- "Try again" button that resets to idle state
+
+<Warning>
+**Common error message:** "Lo sentimos, el banco rechazo la transaccion. Intenta con otro metodo."
+
+This message is hardcoded in the mock payment service (src/lib/core/payments/paymentService.ts:20).
+</Warning>
+
+## Success modal
+
+Success displays a contextual message based on service type (src/app/(checkout)/payment.tsx:366):
+
+```typescript
+<Modal visible={paymentState === 'success'} transparent animationType="fade">
+  <View style={styles.modalOverlay}>
+    <View style={styles.modalCard}>
+      <CheckCircle size={64} color={Brand.success} />
+      <Text style={styles.modalTitle}>Pago exitoso</Text>
+      <Text style={styles.modalBody}>
+        {serviceType === 'TABLE'
+          ? `Pagaste $${grandTotal.toFixed(2)} en ${currentTable?.displayName ?? 'tu mesa'}.\nGracias por tu visita.`
+          : `Pagaste $${grandTotal.toFixed(2)}.\nTu pedido está en camino.`}
+      </Text>
+      <TouchableOpacity style={styles.modalBtn} onPress={handleSuccessDismiss}>
+        <Text style={styles.modalBtnText}>
+          {serviceType === 'TABLE' ? 'Finalizar' : 'Ver ruta'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+</Modal>
+```
+
+## Post-payment navigation
+
+The app routes differently based on service type (src/app/(checkout)/payment.tsx:250):
+
+```typescript
+const handleSuccessDismiss = useCallback(() => {
+  resetCart();
+  if (serviceType === 'TABLE') {
+    // Table order: clear session and go back to scanner
+    clearSession();
+    resetLocation();
+    router.replace('/(tabs)');
+  } else {
+    // Delivery order: navigate to tracking screen
+    router.replace('/(delivery)/track-order');
+  }
+}, [serviceType, resetCart, clearSession, resetLocation, router]);
+```
+
+<Tabs>
+  <Tab title="Table orders">
+    After payment:
+    1. Cart is cleared
+    2. Table session is cleared
+    3. Location store is reset
+    4. User returns to the home screen (scanner/context switcher)
+
+    This allows them to scan a new QR code immediately.
+  </Tab>
+
+  <Tab title="Delivery orders">
+    After payment:
+    1. Cart is cleared
+    2. User is redirected to the tracking screen
+    3. The map shows the driving route with ETA
+
+    See [Tracking](/features/tracking) for details.
+  </Tab>
+</Tabs>
+
+## Haptic feedback
+
+The payment flow includes haptic feedback at key moments (src/app/(checkout)/payment.tsx):
+
+```typescript
+// Payment initiated
+Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+// Payment failed
+Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+
+// Payment succeeded
+Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+```
+
+## Payment result type
+
+The payment service returns a discriminated union (src/lib/core/payments/paymentService.ts:1):
+
+```typescript
+export type PaymentResult =
+  | { success: true }
+  | { success: false; error: string };
+```
+
+This allows type-safe handling:
+
+```typescript
+const result = await processMockPayment(grandTotal);
+
+if (!result.success) {
+  setErrorMsg(result.error); // TypeScript knows `error` exists here
+  setPaymentState('error');
+  return;
+}
+
+// TypeScript knows payment succeeded here
+Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+```
+
+## Integration with real payment processors
+
+To replace the mock with real payment processing:
+
+<Steps>
+  <Step title="Install Stripe SDK">
+    ```bash
+    npm install @stripe/stripe-react-native
+    ```
+  </Step>
+
+  <Step title="Replace processMockPayment">
+    ```typescript
+    import { useStripe } from '@stripe/stripe-react-native';
+
+    const { confirmPayment } = useStripe();
+
+    const result = await confirmPayment(clientSecret, {
+      paymentMethodType: 'Card',
+    });
+    ```
+  </Step>
+
+  <Step title="Backend payment intent">
+    Create a Stripe payment intent on your backend:
+
+    ```typescript
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: grandTotal * 100, // cents
+      currency: 'usd',
+    });
+    ```
+
+    Return `paymentIntent.client_secret` to the app.
+  </Step>
+
+  <Step title="Handle 3D Secure">
+    Stripe SDK automatically handles 3D Secure authentication if required.
+  </Step>
+</Steps>
+
+<Info>
+The current mock is production-ready from a UX perspective — you only need to swap the payment service implementation.
+</Info>
+
+## Related features
+
+<CardGroup cols={2}>
+  <Card title="Tracking" icon="map" href="/features/tracking">
+    Post-payment delivery tracking (delivery orders only)
+  </Card>
+  <Card title="Table Mode" icon="qrcode" href="/features/table-mode">
+    In-restaurant ordering workflow
+  </Card>
+  <Card title="Delivery Mode" icon="truck" href="/features/delivery-mode">
+    Delivery ordering with shipping costs
+  </Card>
+  <Card title="Contextual Menus" icon="utensils" href="/features/contextual-menus">
+    Menu filtering and birthday discounts
+  </Card>
+</CardGroup>

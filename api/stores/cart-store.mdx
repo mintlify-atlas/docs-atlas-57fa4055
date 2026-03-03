@@ -1,0 +1,184 @@
+---
+title: useCartStore
+description: Global state management for shopping cart operations, including items, discounts, and service type
+---
+
+## Overview
+
+The `useCartStore` hook provides centralized cart state management using Zustand. It handles adding/removing items, calculating totals with discounts, and managing service type (table vs delivery) with associated shipping costs.
+
+## Usage
+
+```tsx
+import { useCartStore } from '@/src/stores/useCartStore';
+
+function ProductCard({ product }: { product: Product }) {
+  const addItem = useCartStore((s) => s.addItem);
+  const removeItem = useCartStore((s) => s.removeItem);
+  const items = useCartStore((s) => s.items);
+
+  const cartItem = items.find((i) => i.product.id === product.id);
+  const quantity = cartItem?.quantity ?? 0;
+
+  return (
+    <View>
+      <Text>{product.name} - ${product.price.toFixed(2)}</Text>
+      <Button onPress={() => addItem(product)} title="Add" />
+      {quantity > 0 && (
+        <Button onPress={() => removeItem(product.id)} title="Remove" />
+      )}
+    </View>
+  );
+}
+```
+
+## State properties
+
+<ResponseField name="items" type="CartItem[]">
+  Array of cart items, each containing a product and quantity
+</ResponseField>
+
+<ResponseField name="isBirthdayMode" type="boolean">
+  Whether birthday mode is active (enables special animations and discounts)
+</ResponseField>
+
+<ResponseField name="discount" type="number">
+  Discount percentage applied to the cart total (0 to 1)
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Calculated cart total after applying discounts, rounded to 2 decimal places
+</ResponseField>
+
+<ResponseField name="serviceType" type="'TABLE' | 'DELIVERY'">
+  Current service mode determining the ordering flow
+</ResponseField>
+
+<ResponseField name="shippingCost" type="number">
+  Additional shipping fee for delivery orders (0 for table service)
+</ResponseField>
+
+## Actions
+
+### addItem
+
+Adds a product to the cart or increments quantity if already present.
+
+<ParamField path="product" type="Product" required>
+  The product object to add to the cart
+</ParamField>
+
+```tsx
+const addItem = useCartStore((s) => s.addItem);
+addItem(product);
+```
+
+### removeItem
+
+Removes one unit of a product from the cart. If quantity reaches zero, removes the item entirely.
+
+<ParamField path="productId" type="string" required>
+  The unique identifier of the product to remove
+</ParamField>
+
+```tsx
+const removeItem = useCartStore((s) => s.removeItem);
+removeItem('product-123');
+```
+
+### resetCart
+
+Clears all cart data and resets to initial state.
+
+```tsx
+const resetCart = useCartStore((s) => s.resetCart);
+resetCart();
+```
+
+### setBirthdayMode
+
+Activates or deactivates birthday celebration mode with optional discount.
+
+<ParamField path="active" type="boolean" required>
+  Whether to enable birthday mode
+</ParamField>
+
+<ParamField path="discount" type="number" default="0">
+  Discount percentage to apply (0 to 1)
+</ParamField>
+
+```tsx
+const setBirthdayMode = useCartStore((s) => s.setBirthdayMode);
+setBirthdayMode(true, 0.15); // 15% discount
+```
+
+### setServiceType
+
+Changes the service type between table and delivery modes.
+
+<ParamField path="type" type="'TABLE' | 'DELIVERY'" required>
+  The service type to set
+</ParamField>
+
+```tsx
+const { setServiceType } = useCartStore();
+setServiceType('DELIVERY');
+```
+
+### setShippingCost
+
+Updates the shipping cost for delivery orders.
+
+<ParamField path="cost" type="number" required>
+  The shipping fee amount
+</ParamField>
+
+```tsx
+const { setShippingCost } = useCartStore();
+setShippingCost(4.99);
+```
+
+## Real-world example
+
+```tsx
+import { useCartStore } from '@/src/stores/useCartStore';
+import { useEffect } from 'react';
+import { calculateShippingCost } from '@/src/lib/utils';
+
+function DeliveryCatalog() {
+  const { items, total, shippingCost, setShippingCost } = useCartStore();
+  const deliveryInfo = useLocationStore((s) => s.deliveryInfo);
+
+  useEffect(() => {
+    if (deliveryInfo) {
+      setShippingCost(calculateShippingCost(deliveryInfo.distanceKm));
+    }
+  }, [deliveryInfo, setShippingCost]);
+
+  return (
+    <View>
+      <Text>Subtotal: ${total.toFixed(2)}</Text>
+      <Text>Shipping: ${shippingCost.toFixed(2)}</Text>
+      <Text>Total: ${(total + shippingCost).toFixed(2)}</Text>
+    </View>
+  );
+}
+```
+
+## Type definitions
+
+```typescript
+interface CartItem {
+  product: Product;
+  quantity: number;
+}
+
+interface Product {
+  id: string;
+  name: string;
+  price: number;
+  category: ProductCategory;
+  image: string;
+  description?: string;
+}
+```

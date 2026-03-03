@@ -1,0 +1,193 @@
+---
+title: CameraScanner
+description: QR code scanner component with camera access, barcode validation, and multimodal feedback
+---
+
+The `CameraScanner` component provides a full-screen QR code scanner interface with visual feedback states, haptic responses, and sound effects. It validates scanned QR codes against known table data and handles navigation to the menu or displays error states.
+
+## Component overview
+
+Located at `/src/components/scanner/CameraScanner.tsx`, this component:
+- Manages camera permissions with a graceful error state
+- Scans QR codes and validates them against table data
+- Provides visual feedback (success/error states) with animated scan frames
+- Offers haptic and audio feedback for successful and failed scans
+- Prevents double-scan processing with idempotency guards
+- Displays permission denied states with actionable recovery options
+
+## Props
+
+The `CameraScanner` component does not accept any props. It's a standalone component that manages its own state and integrates with the app's routing and store systems.
+
+## Usage
+
+```tsx
+import CameraScanner from '@/src/components/scanner/CameraScanner';
+
+export default function ScannerScreen() {
+  return <CameraScanner />;
+}
+```
+
+## Permission states
+
+The component handles three permission states:
+
+### Loading state
+
+Displays an activity indicator while checking camera permissions:
+
+```tsx
+if (!permission) {
+  return (
+    <View style={styles.centered}>
+      <ActivityIndicator size="large" color={Brand.primary} />
+    </View>
+  );
+}
+```
+
+### Permission denied
+
+Shows an `ErrorState` component with options to grant permission:
+
+```tsx
+if (!permission.granted) {
+  return (
+    <ErrorState
+      icon={<CameraOff size={60} color={Brand.primary} strokeWidth={1.4} />}
+      title="Camara bloqueada"
+      message="TableOrder necesita acceso a la camara para escanear el codigo QR de tu mesa."
+      primaryAction={
+        permission.canAskAgain
+          ? { label: 'Permitir acceso', onPress: requestPermission }
+          : {
+              label: 'Abrir configuracion',
+              onPress: () => Linking.openSettings(),
+              icon: <Settings size={16} color="#fff" strokeWidth={2} />,
+            }
+      }
+    />
+  );
+}
+```
+
+### Camera active
+
+Renders the full camera view with overlay and scan frame.
+
+## Scan validation
+
+The component validates scanned QR codes against `TABLES_DATA` from the mock data:
+
+```tsx
+const onBarcodeScanned = useCallback(
+  ({ data }: { data: string }) => {
+    if (isProcessing.current) return;
+    isProcessing.current = true;
+
+    const tableData = TABLES_DATA[data];
+
+    if (tableData) {
+      // Valid QR: success feedback
+      setScanState('success');
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      playBeep();
+      setTable(data);
+      
+      setTimeout(() => {
+        router.push({ pathname: '/(tabs)/menu', params: { tableId: data } });
+      }, 900);
+    } else {
+      // Invalid QR: error feedback
+      setScanState('error');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      showToast(msg);
+    }
+  },
+  [router, setTable, showToast]
+);
+```
+
+## Scan states
+
+The `ScanFrame` component displays different visual states:
+
+<ParamField path="idle" type="ScanState">
+  Default neutral state while waiting for a scan
+</ParamField>
+
+<ParamField path="success" type="ScanState">
+  Green animated frame shown when a valid QR code is detected
+</ParamField>
+
+<ParamField path="error" type="ScanState">
+  Red frame displayed when an invalid QR code is scanned
+</ParamField>
+
+## Multimodal feedback
+
+The scanner provides feedback through multiple channels:
+
+### Visual feedback
+- Animated scan frame that changes color based on scan state
+- Darkened overlay with transparent scan area
+- Toast message for invalid QR codes
+
+### Haptic feedback
+- **Success**: Heavy impact haptic (`Haptics.ImpactFeedbackStyle.Heavy`)
+- **Error**: Warning notification haptic (`Haptics.NotificationFeedbackType.Warning`)
+
+### Audio feedback
+- Beep sound plays on successful scan via `playBeep()` from `SoundService`
+
+## Idempotency guard
+
+The component prevents double-scan processing using a ref-based guard:
+
+```tsx
+const isProcessing = useRef(false);
+
+const onBarcodeScanned = useCallback(
+  ({ data }: { data: string }) => {
+    if (isProcessing.current) return;
+    isProcessing.current = true;
+    // ... scan processing logic
+  },
+  [router, setTable, showToast]
+);
+```
+
+The flag resets when the toast is dismissed (`onToastHide` callback).
+
+## Error messages
+
+The component shows context-specific error messages:
+
+```tsx
+const msg = data.startsWith('TABLE_')
+  ? 'Este codigo no pertenece a ninguna mesa de TableOrder.'
+  : 'Este codigo QR no es valido para TableOrder.';
+```
+
+## Dependencies
+
+- `expo-camera`: Camera access and QR code scanning
+- `expo-haptics`: Haptic feedback
+- `expo-router`: Navigation after successful scan
+- `lucide-react-native`: Icons for UI states
+- `@/src/stores/useTableStore`: Table state management
+- `@/src/lib/core/sound/SoundService`: Audio feedback
+- `@/src/components/scanner/ScanFrame`: Animated scan frame overlay
+- `@/src/components/ui/ErrorState`: Permission denied UI
+- `@/src/components/ui/ToastMessage`: Error toast notifications
+
+## Configuration
+
+The scan frame size is configurable:
+
+```tsx
+const FRAME_SIZE = 260;
+```
+
+This constant controls the width and height of the transparent scanning area in the overlay.

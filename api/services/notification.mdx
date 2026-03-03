@@ -1,0 +1,241 @@
+---
+title: Notification service
+description: Send local push notifications using expo-notifications
+---
+
+The Notification service provides local push notification functionality for payment confirmations. It handles permission requests and sends immediate notifications using expo-notifications.
+
+## Configuration
+
+The service configures notification behavior for foreground display:
+
+```typescript
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+```
+
+This ensures notifications appear even when the app is in the foreground, with sound enabled.
+
+## Functions
+
+### requestNotificationPermissions
+
+Requests notification permissions from the user. Should be called during app startup or before the first notification.
+
+```typescript
+requestNotificationPermissions(): Promise<boolean>
+```
+
+<ResponseField name="granted" type="boolean">
+  `true` if permissions were granted, `false` otherwise
+</ResponseField>
+
+#### Example
+
+```typescript
+import { requestNotificationPermissions } from '@/src/lib/core/notifications/NotificationService';
+
+// Call during app initialization
+useEffect(() => {
+  requestNotificationPermissions();
+}, []);
+```
+
+#### Behavior
+
+1. Checks existing permissions using `getPermissionsAsync()`
+2. Returns `true` immediately if already granted
+3. Otherwise requests permissions using `requestPermissionsAsync()`
+4. Returns the result of the permission request
+
+---
+
+### sendPaymentNotification
+
+Fires an immediate local notification confirming a successful payment.
+
+```typescript
+sendPaymentNotification(
+  amount: number,
+  tableName: string
+): Promise<void>
+```
+
+<ParamField path="amount" type="number" required>
+  Payment amount to display in the notification body
+</ParamField>
+
+<ParamField path="tableName" type="string" required>
+  Table name to display in the notification body (e.g., "Mesa 5")
+</ParamField>
+
+<ResponseField name="void" type="void">
+  Returns void after scheduling the notification. If permissions are denied, the function returns early without sending.
+</ResponseField>
+
+#### Example
+
+```typescript
+import { sendPaymentNotification } from '@/src/lib/core/notifications/NotificationService';
+import { processMockPayment } from '@/src/lib/core/payments/paymentService';
+
+const paymentResult = await processMockPayment(totalAmount);
+
+if (paymentResult.success) {
+  await sendPaymentNotification(totalAmount, 'Mesa 7');
+  router.push('/success');
+}
+```
+
+#### Complete checkout flow
+
+```typescript
+import { sendPaymentNotification } from '@/src/lib/core/notifications/NotificationService';
+
+// After successful payment
+const handleSuccessfulPayment = async () => {
+  // Send notification
+  await sendPaymentNotification(total, tableData.displayName);
+  
+  // Generate and send PDF
+  const pdfUri = await generateTicketPDF(ticketData);
+  await sendTicketToTelegram(pdfUri);
+  
+  // Navigate to success screen
+  router.push('/(checkout)/payment-success');
+};
+```
+
+## Notification content
+
+### Title
+
+```
+Pago exitoso
+```
+
+### Body template
+
+```
+Has pagado correctamente $[amount] en tu orden de la [tableName]. Gracias por tu visita.
+```
+
+### Example notification
+
+```
+Title: Pago exitoso
+Body: Has pagado correctamente $45.50 en tu orden de la Mesa 7. Gracias por tu visita.
+```
+
+### Sound
+
+Notifications play the default system sound (`sound: true`).
+
+### Trigger
+
+Notifications fire immediately using `trigger: null`:
+
+```typescript
+await Notifications.scheduleNotificationAsync({
+  content: {
+    title: 'Pago exitoso',
+    body: '...',
+    sound: true,
+  },
+  trigger: null, // immediate
+});
+```
+
+## Permission handling
+
+### Auto-request
+
+`sendPaymentNotification` automatically requests permissions before sending:
+
+```typescript
+const granted = await requestNotificationPermissions();
+if (!granted) return;
+```
+
+If the user denies permissions, the notification is silently skipped.
+
+### Manual request
+
+You can request permissions proactively during onboarding:
+
+```typescript
+const PermissionScreen = () => {
+  const handleRequestPermissions = async () => {
+    const granted = await requestNotificationPermissions();
+    if (granted) {
+      console.log('Notifications enabled');
+    } else {
+      console.log('User denied notification permissions');
+    }
+  };
+  
+  return (
+    <Button onPress={handleRequestPermissions}>
+      Enable notifications
+    </Button>
+  );
+};
+```
+
+## Platform considerations
+
+### iOS
+
+- First call to `requestPermissionsAsync()` shows the system permission dialog
+- Subsequent calls return the cached permission status
+- Users can revoke permissions in Settings → [App Name] → Notifications
+
+### Android
+
+- Android 13+ requires explicit permission request (handled by expo-notifications)
+- Earlier versions grant notification permissions by default
+- Users can revoke in Settings → Apps → [App Name] → Notifications
+
+## Best practices
+
+1. **Request permissions early**: Call `requestNotificationPermissions()` during app initialization or onboarding
+
+2. **Handle denial gracefully**: The app should still function if notifications are denied
+
+3. **Don't spam**: Only send notifications for important events (payment success, order ready, etc.)
+
+4. **Test on device**: Notifications don't work reliably in simulators
+
+<Note>
+  Local notifications (like these) work without any backend setup. They're scheduled directly on the device and don't require push notification certificates or FCM/APNs configuration.
+</Note>
+
+## Integration with other services
+
+Notifications complement other feedback mechanisms:
+
+- **Sound service**: Plays audio beep for immediate feedback
+- **Haptics**: Provides tactile confirmation
+- **Notifications**: Persistent confirmation that survives app backgrounding
+
+Example combined flow:
+
+```typescript
+import { playBeep } from '@/src/lib/core/sound/SoundService';
+import { sendPaymentNotification } from '@/src/lib/core/notifications/NotificationService';
+import * as Haptics from 'expo-haptics';
+
+const handlePaymentSuccess = async () => {
+  // Immediate feedback
+  await playBeep();
+  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  
+  // Persistent confirmation
+  await sendPaymentNotification(amount, tableName);
+};
+```
