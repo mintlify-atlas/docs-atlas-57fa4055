@@ -1,0 +1,111 @@
+{
+  "projectType": "saas",
+  "projectName": "TableOrder",
+  "projectDescription": "A smart dining solution that enables contactless ordering through QR codes and delivery with GPS-based context switching.",
+  "theme": "almond",
+  "primaryColor": "#3B82F6",
+  "lightColor": "#60A5FA",
+  "darkColor": "#1E40AF",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "installation", "quickstart"]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/table-mode",
+              "features/delivery-mode",
+              "features/qr-scanner",
+              "features/contextual-menus",
+              "features/payments",
+              "features/tracking"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment",
+              "configuration/mapbox",
+              "configuration/stripe",
+              "configuration/telegram"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/state-management",
+              "architecture/services"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Stores",
+            "pages": [
+              "api/stores/cart-store",
+              "api/stores/table-store",
+              "api/stores/location-store"
+            ]
+          },
+          {
+            "group": "Services",
+            "pages": [
+              "api/services/mapbox",
+              "api/services/payment",
+              "api/services/pdf",
+              "api/services/telegram",
+              "api/services/notification",
+              "api/services/sound"
+            ]
+          },
+          {
+            "group": "Components",
+            "pages": [
+              "api/components/camera-scanner",
+              "api/components/context-switcher",
+              "api/components/ui-components"
+            ]
+          },
+          {
+            "group": "Types",
+            "pages": ["api/types"]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "GPS-based geofencing for automatic mode switching",
+    "QR code scanner with haptic feedback",
+    "Contextual menus filtered by table type",
+    "Birthday mode with automatic discounts",
+    "Delivery tracking with Mapbox route visualization",
+    "Stripe payment integration",
+    "PDF receipt generation and Telegram dispatch",
+    "Push notifications on payment success"
+  ],
+  "publicApiSurface": [
+    "useCartStore",
+    "useTableStore",
+    "useLocationStore",
+    "getDeliveryRoute",
+    "calculateShippingCost",
+    "processMockPayment",
+    "generatePDFReceipt",
+    "sendTelegramReceipt",
+    "NotificationService",
+    "SoundService",
+    "CameraScanner",
+    "ContextSwitcher",
+    "BirthdayBanner"
+  ]
+}
